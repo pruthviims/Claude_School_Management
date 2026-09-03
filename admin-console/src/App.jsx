@@ -64,12 +64,21 @@ function load() {
   return null;
 }
 
+// Bus Routes and Fee Structure share one sidebar entry — routes have to
+// exist before a fare can be attached to a class, so keeping them one click
+// apart makes that dependency obvious rather than splitting it across the
+// sidebar.
 const NAV = [
   { id: "school", label: "School Profile", Icon: School },
-  { id: "transport", label: "Bus Routes", Icon: Bus },
-  { id: "fees", label: "Fee Structure", Icon: ReceiptIndianRupee },
+  { id: "feesSetup", label: "Fees Setup", Icon: ReceiptIndianRupee,
+    group: ["transport", "fees"] },
   { id: "import", label: "Student Records", Icon: Users },
   { id: "concessions", label: "Fees & Concessions", Icon: Percent },
+];
+
+const FEES_SUBTABS = [
+  { id: "transport", label: "Bus Routes", Icon: Bus },
+  { id: "fees", label: "Fee Structure", Icon: ReceiptIndianRupee },
 ];
 
 export default function App() {
@@ -149,9 +158,12 @@ export default function App() {
 
         <nav className="flex lg:flex-col overflow-x-auto px-3 pb-3 gap-1.5">
           {NAV.map((n) => {
-            const on = step === n.id;
+            // A grouped item is "on" if the current step is any of its
+            // sub-steps, so Fees Setup stays highlighted on both sub-tabs.
+            const on = n.group ? n.group.includes(step) : step === n.id;
             return (
-              <button key={n.id} onClick={() => setStep(n.id)}
+              <button key={n.id}
+                onClick={() => setStep(n.group ? (n.group.includes(step) ? step : n.group[0]) : n.id)}
                 className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm whitespace-nowrap transition ${
                   on ? "bg-brand-600 text-white font-bold shadow-[0_10px_22px_-12px_rgba(91,61,245,1)]"
                      : "text-slate-500 font-semibold hover:bg-slate-50"}`}>
@@ -198,6 +210,22 @@ export default function App() {
         </div>
 
         {step === "school" && <SchoolScreen state={state} save={setState} />}
+
+        {(step === "transport" || step === "fees") && (
+          <div className="mb-7 inline-flex bg-white rounded-xl border border-slate-100 p-1 shadow-[0_1px_3px_rgba(15,23,41,0.04)]">
+            {FEES_SUBTABS.map((t) => {
+              const on = step === t.id;
+              return (
+                <button key={t.id} onClick={() => setStep(t.id)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition ${
+                    on ? "bg-brand-600 text-white shadow-[0_6px_14px_-8px_rgba(91,61,245,0.9)]"
+                       : "text-slate-500 hover:text-slate-700"}`}>
+                  <t.Icon size={15} /> {t.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
         {step === "transport" && <TransportScreen state={state} save={setState} />}
         {step === "fees" && <FeeScreen state={state} save={setState} />}
         {step === "import" && <ImportScreen state={state} save={setState} />}

@@ -1,7 +1,6 @@
 import React, { useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
-  ArrowLeft,
   Bus,
   Check,
   ChevronDown,
@@ -491,64 +490,19 @@ function CopyPanel({ active, onCopy, onCancel }) {
 }
 
 /* ================================================================== */
-/* Import students — chosen class first                                */
+/* Import students — class chosen from a dropdown, no separate picker  */
 /* ================================================================== */
 
 export function ImportScreen({ state, save }) {
-  const [klass, setKlass] = useState(null);
-  return klass
-    ? <ClassImport state={state} save={save} klass={klass} onBack={() => setKlass(null)} />
-    : <ClassPicker state={state} onPick={setKlass} />;
-}
-
-function ClassPicker({ state, onPick }) {
-  const countOf = (name) => state.students.filter((s) => s.className === name).length;
-  const total = state.students.length;
-
-  return (
-    <div>
-      <PageHead title="Student Records"
-        subtitle="Import your existing roll one class at a time. Pick the class you are importing into, then upload the sheet the office already keeps." />
-
-      <div className="grid sm:grid-cols-3 gap-5 mb-6">
-        <StatCard icon={Users} tint="bg-brand-50 text-brand-600" label="Students on roll"
-          value={total} note="Across all classes" />
-        <StatCard icon={FileSpreadsheet} tint="bg-emerald-50 text-emerald-600" label="Classes filled"
-          value={CLASSES.filter((c) => countOf(c.name) > 0).length}
-          note={`of ${CLASSES.length}`} noteTint="text-emerald-600" />
-        <StatCard icon={Bus} tint="bg-amber-50 text-amber-600" label="On transport"
-          value={state.students.filter((s) => s.stopId).length} note="Assigned a stop"
-          noteTint="text-amber-600" />
-      </div>
-
-      <div className={`${panel} overflow-hidden`}>
-        <div className="px-6 py-5 border-b border-slate-100">
-          <h2 className="text-lg font-extrabold">Choose a class to import into</h2>
-        </div>
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 p-5">
-          {CLASSES.map((c) => {
-            const n = countOf(c.name);
-            return (
-              <button key={c.name} onClick={() => onPick(c.name)}
-                className="text-left rounded-xl border border-slate-100 hover:border-brand-500 hover:shadow-[0_8px_20px_-12px_rgba(91,61,245,0.6)] p-4 transition group">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-extrabold">{c.name}</span>
-                  <Upload size={15} className="text-slate-300 group-hover:text-brand-600" />
-                </div>
-                <p className="text-xs font-semibold text-slate-400">{c.stage}</p>
-                <p className={`text-sm font-bold mt-2 tabular-nums ${n ? "text-emerald-600" : "text-slate-300"}`}>
-                  {n ? `${n} student${n === 1 ? "" : "s"}` : "No students yet"}
-                </p>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    </div>
+  // Default to the first class with students already in it, else the first
+  // class on the ladder. Either way the dropdown is never empty on load.
+  const [klass, setKlass] = useState(
+    () => state.students[0]?.className || CLASSES[0].name,
   );
+  return <ClassImport state={state} save={save} klass={klass} setKlass={setKlass} />;
 }
 
-function ClassImport({ state, save, klass, onBack }) {
+function ClassImport({ state, save, klass, setKlass }) {
   const [text, setText] = useState("");
   const [filename, setFilename] = useState("");
   const [map, setMap] = useState(null);
@@ -621,15 +575,52 @@ function ClassImport({ state, save, klass, onBack }) {
   const shown = filter === "errors" ? bad : filter === "warnings" ? warned
     : filter === "ok" ? good : rows;
   const existing = state.students.filter((s) => s.className === klass);
+  const total = state.students.length;
+  const countOf = (name) => state.students.filter((s) => s.className === name).length;
+
+  // Switching class mid-upload would silently reassign whatever is on
+  // screen against the wrong roll, so the picker resets the file instead.
+  function changeClass(next) {
+    setKlass(next);
+    setMap(null); setBody([]); setHeaders([]); setText(""); setError(""); setDone(null);
+  }
 
   return (
     <div>
-      <button onClick={onBack} className="flex items-center gap-1.5 eyebrow text-slate-400 hover:text-slate-600 mb-4">
-        <ArrowLeft size={13} /> All classes
-      </button>
+      <PageHead title="Student Records"
+        subtitle="Import your existing roll one class at a time. Choose the class below, then upload the sheet the office already keeps." />
 
-      <PageHead title={`Import into ${klass}`}
-        subtitle="Every row goes into this class unless the sheet names a different one. Nothing is saved until you press Import." />
+      <div className="grid sm:grid-cols-3 gap-5 mb-6">
+        <StatCard icon={Users} tint="bg-brand-50 text-brand-600" label="Students on roll"
+          value={total} note="Across all classes" />
+        <StatCard icon={FileSpreadsheet} tint="bg-emerald-50 text-emerald-600" label="Classes filled"
+          value={CLASSES.filter((c) => countOf(c.name) > 0).length}
+          note={`of ${CLASSES.length}`} noteTint="text-emerald-600" />
+        <StatCard icon={Bus} tint="bg-amber-50 text-amber-600" label="On transport"
+          value={state.students.filter((s) => s.stopId).length} note="Assigned a stop"
+          noteTint="text-amber-600" />
+      </div>
+
+      <div className={`${panel} p-5 mb-6 flex flex-wrap items-end gap-4`}>
+        <div className="min-w-[240px]">
+          <label className={eyebrow}>Importing into</label>
+          <select className={`${field} mt-2 font-bold`} value={klass}
+            onChange={(e) => changeClass(e.target.value)}>
+            {CLASSES.map((c) => {
+              const n = countOf(c.name);
+              return (
+                <option key={c.name} value={c.name}>
+                  {c.name} — {c.stage}{n ? ` (${n} already in)` : ""}
+                </option>
+              );
+            })}
+          </select>
+        </div>
+        <p className="text-xs text-slate-500 pb-2.5 max-w-md">
+          Every row in the file below goes into <b className="text-slate-700">{klass}</b>{" "}
+          unless the sheet names a different class for that row.
+        </p>
+      </div>
 
       {done && (
         <div className="mb-6 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl px-5 py-4 text-sm font-semibold">
@@ -841,6 +832,8 @@ function ClassImport({ state, save, klass, onBack }) {
 export function ConcessionScreen({ state, save }) {
   const [query, setQuery] = useState("");
   const [onlyWith, setOnlyWith] = useState(false);
+  const [classFilter, setClassFilter] = useState("");
+  const [sectionFilter, setSectionFilter] = useState("");
   const stops = allStops(state.routes);
 
   const patchStudent = (id, changes) =>
@@ -848,14 +841,33 @@ export function ConcessionScreen({ state, save }) {
   const setConcession = (s, changes) =>
     patchStudent(s.id, { concession: { ...s.concession, ...changes } });
 
+  // Sections are free text from import, not a fixed list, so they are
+  // derived from whoever is actually on the roll for the chosen class —
+  // narrower once a class is picked, so the list never shows a section
+  // that doesn't exist in that class.
+  const sectionsForClass = classFilter
+    ? [...new Set(
+        state.students.filter((s) => s.className === classFilter).map((s) => s.section),
+      )].sort()
+    : [];
+
+  function changeClass(next) {
+    setClassFilter(next);
+    setSectionFilter("");
+  }
+
   const shown = state.students.filter((s) => {
+    if (classFilter && s.className !== classFilter) return false;
+    if (sectionFilter && s.section !== sectionFilter) return false;
     if (onlyWith && !(s.concession?.value > 0)) return false;
     if (!query) return true;
     const q = query.toLowerCase();
     return s.name.toLowerCase().includes(q) || s.admissionNo.toLowerCase().includes(q);
   });
 
-  const totals = state.students.reduce((a, s) => {
+  // Totals reflect the same filters as the table, so the numbers above
+  // always describe what's actually listed below.
+  const totals = shown.reduce((a, s) => {
     const f = computeFee(s, state);
     return { gross: a.gross + f.gross, concession: a.concession + f.concession,
              net: a.net + f.net, count: a.count + (f.concession > 0 ? 1 : 0) };
@@ -880,7 +892,8 @@ export function ConcessionScreen({ state, save }) {
 
       <div className="grid sm:grid-cols-4 gap-5 mb-6">
         <StatCard icon={Users} tint="bg-brand-50 text-brand-600" label="Students"
-          value={state.students.length} note="On the roll" />
+          value={shown.length}
+          note={shown.length === state.students.length ? "On the roll" : `Of ${state.students.length} on the roll`} />
         <StatCard icon={IndianRupee} tint="bg-slate-100 text-slate-500" label="Gross fees"
           value={inr(totals.gross)} note="Before concessions" />
         <StatCard icon={Percent} tint="bg-amber-50 text-amber-600" label="Concessions"
@@ -890,6 +903,21 @@ export function ConcessionScreen({ state, save }) {
       </div>
 
       <div className="flex flex-wrap gap-2.5 mb-5">
+        <select className={`${field} w-auto min-w-[160px] font-semibold`} value={classFilter}
+          onChange={(e) => changeClass(e.target.value)}>
+          <option value="">All classes</option>
+          {CLASSES.map((c) => (
+            <option key={c.name} value={c.name}>{c.name}</option>
+          ))}
+        </select>
+        <select className={`${field} w-auto min-w-[140px] font-semibold disabled:bg-slate-50 disabled:text-slate-300`}
+          value={sectionFilter} disabled={!classFilter}
+          onChange={(e) => setSectionFilter(e.target.value)}>
+          <option value="">{classFilter ? "All sections" : "Select a class first"}</option>
+          {sectionsForClass.map((sec) => (
+            <option key={sec} value={sec}>Section {sec}</option>
+          ))}
+        </select>
         <input className={`${field} max-w-xs`} value={query} placeholder="Find by name or admission no."
           onChange={(e) => setQuery(e.target.value)} />
         <button onClick={() => setOnlyWith(!onlyWith)}
@@ -898,12 +926,30 @@ export function ConcessionScreen({ state, save }) {
                      : "bg-white border-slate-200 text-slate-500 hover:border-slate-300"}`}>
           With a concession
         </button>
+        {(classFilter || sectionFilter || query || onlyWith) && (
+          <button onClick={() => { setClassFilter(""); setSectionFilter(""); setQuery(""); setOnlyWith(false); }}
+            className="text-sm font-semibold rounded-xl px-4 py-2.5 text-slate-400 hover:text-slate-600">
+            Clear filters
+          </button>
+        )}
       </div>
 
       <div className={`${panel} overflow-hidden`}>
         <div className="px-6 py-5 border-b border-slate-100">
-          <h2 className="text-lg font-extrabold">Student Fee Records</h2>
+          <h2 className="text-lg font-extrabold">
+            Student Fee Records
+            {(classFilter || sectionFilter) && (
+              <span className="font-semibold text-slate-400 text-base">
+                {" "}— {classFilter || "all classes"}{sectionFilter ? `-${sectionFilter}` : ""}
+              </span>
+            )}
+          </h2>
         </div>
+        {shown.length === 0 ? (
+          <p className="px-6 py-10 text-center text-slate-400 font-semibold">
+            No students match {classFilter ? `${classFilter}${sectionFilter ? `-${sectionFilter}` : ""}` : "these filters"}.
+          </p>
+        ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1040px]">
             <thead className="bg-slate-50/70">
@@ -996,6 +1042,7 @@ export function ConcessionScreen({ state, save }) {
             </tbody>
           </table>
         </div>
+        )}
       </div>
 
       <p className="text-xs text-slate-400 mt-5 max-w-3xl leading-relaxed">
