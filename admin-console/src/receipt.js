@@ -73,13 +73,12 @@ export function buildReceiptPdf({ school, payment, duplicate = false }) {
     },
   });
 
-  // Line items. Explicit column widths (122 + 60 = 182 = WIDTH) so the
-  // amount column is always fully inside the margins, regardless of how
-  // long a fee component's name happens to be.
+  // Line items — just the fee components themselves. Concession, and the
+  // whole paid/balance picture, live in the summary table below instead of
+  // being folded in here, so the reading order matches what was asked for:
+  // fee breakdown, then total fees, then total discount, then the payment
+  // ledger.
   const rows = (payment.feeLines || []).map((l) => [l.name, inrPlain(l.amount)]);
-  if (payment.concessionAtPayment > 0) {
-    rows.push(["Concession applied", `-${inrPlain(payment.concessionAtPayment)}`]);
-  }
 
   autoTable(doc, {
     startY: doc.lastAutoTable.finalY + 6,
@@ -87,27 +86,88 @@ export function buildReceiptPdf({ school, payment, duplicate = false }) {
     theme: "grid",
     head: [["Particulars", "Amount (Rs.)"]],
     body: rows,
-    foot: [["Amount received", inrPlain(payment.amount)]],
     styles: { fontSize: 9.5, cellPadding: 3, lineColor: [225, 225, 230], lineWidth: 0.2 },
     headStyles: { fillColor: [245, 245, 248], textColor: [30, 30, 30], fontStyle: "bold",
       fontSize: 8.5 },
-    footStyles: { fillColor: [255, 255, 255], textColor: [20, 20, 20], fontStyle: "bold",
-      fontSize: 11, lineWidth: { top: 0.6, left: 0.2, right: 0.2, bottom: 0.2 },
-      lineColor: [30, 30, 35] },
     columnStyles: {
       0: { cellWidth: WIDTH - 45 },
       1: { cellWidth: 45, halign: "right" },
     },
   });
 
-  let y = doc.lastAutoTable.finalY + 10;
+  // Prior instalments, oldest first — the actual "for record purposes"
+  // ledger the office asked for, not just a single running total that
+  // would lose the trail the next time a payment gets added.
+  const priorPayments = payment.priorPayments || [];
+  if (priorPayments.length > 0) {
+    autoTable(doc, {
+      startY: doc.lastAutoTable.finalY + 6,
+      margin: { left: LEFT, right: 210 - RIGHT },
+      theme: "grid",
+      head: [["Previous instalments", "Date", "Amount (Rs.)"]],
+      body: priorPayments.map((p) => [p.receiptNo, displayDate(p.receivedOn), inrPlain(p.amount)]),
+      styles: { fontSize: 8.5, cellPadding: 2.4, lineColor: [225, 225, 230], lineWidth: 0.2,
+        textColor: [70, 70, 75] },
+      headStyles: { fillColor: [245, 245, 248], textColor: [30, 30, 30], fontStyle: "bold",
+        fontSize: 7.5 },
+      columnStyles: {
+        0: { cellWidth: 82 },
+        1: { cellWidth: 55 },
+        2: { cellWidth: 45, halign: "right" },
+      },
+    });
+  }
+
+  // Payment summary: total fees, total discount, net payable, then the
+  // instalment picture — what was paid before, what's being paid now, and
+  // what's left — exactly the sequence asked for.
+  const paidBefore = priorPayments.reduce((a, p) => a + p.amount, 0);
+  const summaryRows = [["Total fees", inrPlain(payment.grossAtPayment)]];
+  if (payment.concessionAtPayment > 0) {
+    summaryRows.push(["Total discount", `-${inrPlain(payment.concessionAtPayment)}`]);
+  }
+  summaryRows.push(["Net payable", inrPlain(payment.netAtPayment)]);
+  if (paidBefore > 0) summaryRows.push(["Paid previously", inrPlain(paidBefore)]);
+  summaryRows.push(["Paid now", inrPlain(payment.amount)]);
+  if (paidBefore > 0) {
+    summaryRows.push(["Total paid to date", inrPlain(paidBefore + payment.amount)]);
+  }
+  const balanceRowIndex = summaryRows.length;
+  summaryRows.push([
+    payment.balanceAfterAtPayment > 0 ? "Balance due" : "Balance",
+    payment.balanceAfterAtPayment > 0 ? inrPlain(payment.balanceAfterAtPayment) : "Paid in full",
+  ]);
+
+  autoTable(doc, {
+    startY: doc.lastAutoTable.finalY + 6,
+    margin: { left: LEFT, right: 210 - RIGHT },
+    theme: "grid",
+    body: summaryRows,
+    styles: { fontSize: 9.5, cellPadding: 3, lineColor: [225, 225, 230], lineWidth: 0.2,
+      fontStyle: "bold", textColor: [20, 20, 20] },
+    columnStyles: {
+      0: { cellWidth: WIDTH - 45 },
+      1: { cellWidth: 45, halign: "right" },
+    },
+    didParseCell: (data) => {
+      if (data.row.index === balanceRowIndex) {
+        data.cell.styles.fontSize = 11;
+        data.cell.styles.textColor = payment.balanceAfterAtPayment > 0
+          ? [180, 60, 50] : [20, 120, 85];
+        data.cell.styles.fillColor = payment.balanceAfterAtPayment > 0
+          ? [253, 244, 243] : [240, 250, 246];
+      }
+    },
+  });
+
+  let y = doc.lastAutoTable.finalY + 8;
 
   doc.setFont("helvetica", "italic");
-  doc.setFontSize(9.5);
+  doc.setFontSize(9);
   doc.setTextColor(80, 80, 85);
-  const words = doc.splitTextToSize(amountInWords(payment.amount), WIDTH);
+  const words = doc.splitTextToSize(`This payment: ${amountInWords(payment.amount)}`, WIDTH);
   doc.text(words, LEFT, y);
-  y += words.length * 5.5 + 6;
+  y += words.length * 5 + 6;
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
@@ -117,18 +177,7 @@ export function buildReceiptPdf({ school, payment, duplicate = false }) {
   modeLine += ".";
   if (payment.mode === "cheque") modeLine += " Subject to realisation.";
   doc.text(modeLine, LEFT, y);
-  y += 6;
-
-  if (payment.balanceAfterAtPayment > 0) {
-    doc.setTextColor(180, 60, 50);
-    doc.setFont("helvetica", "bold");
-    doc.text(`Balance still due: Rs. ${inrPlain(payment.balanceAfterAtPayment)}`, LEFT, y);
-  } else {
-    doc.setTextColor(20, 120, 85);
-    doc.setFont("helvetica", "bold");
-    doc.text("Fees settled in full for this academic year.", LEFT, y);
-  }
-  y += 16;
+  y += 10;
 
   // Footer follows the content directly rather than pinning to the
   // physical bottom of the A4 page — a receipt legitimately only fills

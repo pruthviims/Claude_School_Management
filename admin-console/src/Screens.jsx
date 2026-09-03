@@ -1730,6 +1730,13 @@ export function PaymentModal({ state, save, student, onClose }) {
       netAtPayment: fee.net,
       balanceBeforeAtPayment: rawBalance,
       balanceAfterAtPayment: rawBalance - amt,
+      // Every earlier instalment this year, oldest first, snapshotted onto
+      // this record so the printed receipt is a full ledger — "last time
+      // you paid X, this time Y, balance Z" — not just a single running
+      // total that loses the trail once the next payment is added.
+      priorPayments: [...payments].reverse().map((p) => ({
+        receiptNo: p.receiptNo, receivedOn: p.receivedOn, amount: p.amount,
+      })),
     };
     save({ ...state, payments: [...state.payments, payment] });
     downloadReceipt({ school: state.school, payment, duplicate: false });
