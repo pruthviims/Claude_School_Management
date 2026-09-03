@@ -1,0 +1,5 @@
+{
+  "installCommand": "npm --prefix admin-console install",
+  "buildCommand": "npm --prefix admin-console run build",
+  "outputDirectory": "admin-console/dist"
+}
