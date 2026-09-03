@@ -7,10 +7,12 @@ import {
   ReceiptIndianRupee,
   RefreshCw,
   School,
+  Sparkles,
   Users,
 } from "lucide-react";
 import { Login, Setup } from "./Auth";
 import {
+  AdmissionScreen,
   ConcessionScreen,
   FeeScreen,
   ImportScreen,
@@ -57,7 +59,15 @@ function freshWorkspace(school) {
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) return JSON.parse(raw);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    // Students saved before per-year tagging existed have no `year` field.
+    // Backfill them to whatever year was active when they were saved, so
+    // year-based filtering elsewhere never silently drops old data.
+    if (parsed?.students?.some((s) => !s.year)) {
+      parsed.students = parsed.students.map((s) => ({ ...s, year: s.year || parsed.year }));
+    }
+    return parsed;
   } catch {
     /* unreadable storage falls through to a fresh start */
   }
@@ -72,6 +82,7 @@ const NAV = [
   { id: "school", label: "School Profile", Icon: School },
   { id: "feesSetup", label: "Fees Setup", Icon: ReceiptIndianRupee,
     group: ["transport", "fees"] },
+  { id: "admissions", label: "Admissions", Icon: Sparkles },
   { id: "import", label: "Student Records", Icon: Users },
   { id: "concessions", label: "Fees & Concessions", Icon: Percent },
 ];
@@ -228,6 +239,7 @@ export default function App() {
         )}
         {step === "transport" && <TransportScreen state={state} save={setState} />}
         {step === "fees" && <FeeScreen state={state} save={setState} />}
+        {step === "admissions" && <AdmissionScreen state={state} save={setState} />}
         {step === "import" && <ImportScreen state={state} save={setState} />}
         {step === "concessions" && <ConcessionScreen state={state} save={setState} />}
 

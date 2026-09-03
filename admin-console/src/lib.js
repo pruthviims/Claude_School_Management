@@ -21,6 +21,37 @@ export const CLASSES = [
 
 export const TERMS = [1, 2, 3];
 
+// X -> 1st PU is never automatic: many students leave for another board or
+// college after X, so promotion into these classes needs an explicit,
+// per-student decision rather than a bulk "promote everyone" action.
+export const OPTIN_TARGETS = new Set(["1st PU"]);
+
+// 2nd PU has nothing above it — promoting from here means completing
+// school, not moving up a class.
+export const TERMINAL_CLASSES = new Set(["2nd PU"]);
+
+export function nextClassName(current) {
+  const i = CLASSES.findIndex((c) => c.name === current);
+  if (i === -1 || i === CLASSES.length - 1) return null;
+  return CLASSES[i + 1].name;
+}
+
+export function isTerminalClass(name) {
+  return TERMINAL_CLASSES.has(name);
+}
+
+export function needsOptIn(targetClass) {
+  return OPTIN_TARGETS.has(targetClass);
+}
+
+// Students carry the academic year they were enrolled in. Records saved
+// before this field existed have none, so treat "no year" as belonging to
+// whichever year is asked about — safe because every write path now tags
+// year explicitly, this only matters for old browser-stored data.
+export function inYear(student, year) {
+  return (student.year || year) === year;
+}
+
 // The transport row in a fee structure carries no amount of its own — the
 // figure comes from whichever stop the student boards at. Marked by this id
 // so the editor can render it differently and the calculator can resolve it.

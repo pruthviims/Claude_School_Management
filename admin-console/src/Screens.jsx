@@ -1,17 +1,21 @@
 import React, { useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ArrowRight,
   Bus,
   Check,
   ChevronDown,
   ChevronRight,
   Download,
   FileSpreadsheet,
+  GraduationCap,
   IndianRupee,
   Percent,
   Plus,
+  Sparkles,
   Trash2,
   Upload,
+  UserPlus,
   Users,
 } from "lucide-react";
 import {
@@ -26,7 +30,11 @@ import {
   computeFee,
   displayDate,
   fareRange,
+  inYear,
   inr,
+  isTerminalClass,
+  needsOptIn,
+  nextClassName,
   oneTimeTotal,
   parseCSV,
   recurringTotal,
@@ -78,6 +86,33 @@ export function StatCard({ icon: Icon, tint, label, value, note, noteTint }) {
 
 function uid() {
   return `id${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/**
+ * A select styled to read as a filter, not a form field: tinted background
+ * and border, custom chevron (the native one is too faint against the
+ * panel background to notice at a glance), and an "active" state so a
+ * filter that's actually narrowing the list looks different from one left
+ * at its default "All ..." value.
+ */
+export function FilterSelect({ value, onChange, disabled, active, className = "", children }) {
+  return (
+    <div className={`relative ${className}`}>
+      <select value={value} onChange={onChange} disabled={disabled}
+        className={`appearance-none w-full pl-3.5 pr-9 py-2.5 rounded-xl text-sm font-bold outline-none border-2 transition ${
+          disabled
+            ? "bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed"
+            : active
+              ? "bg-brand-50 border-brand-400 text-brand-700"
+              : "bg-white border-slate-200 text-slate-600 hover:border-brand-300"
+        }`}>
+        {children}
+      </select>
+      <ChevronDown size={16}
+        className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 ${
+          disabled ? "text-slate-300" : active ? "text-brand-500" : "text-slate-400"}`} />
+    </div>
+  );
 }
 
 /* ================================================================== */
@@ -155,10 +190,11 @@ export function TransportScreen({ state, save }) {
     setOpenId(r.id);
   }
 
-  const riders = (stopId) => state.students.filter((s) => s.stopId === stopId).length;
+  const currentYearStudents = state.students.filter((s) => inYear(s, state.year));
+  const riders = (stopId) => currentYearStudents.filter((s) => s.stopId === stopId).length;
   const stops = allStops(routes);
   const range = fareRange(routes);
-  const totalRiders = state.students.filter((s) => s.stopId).length;
+  const totalRiders = currentYearStudents.filter((s) => s.stopId).length;
 
   function patchStop(routeId, stopId, changes) {
     const route = routes.find((r) => r.id === routeId);
@@ -490,14 +526,455 @@ function CopyPanel({ active, onCopy, onCancel }) {
 }
 
 /* ================================================================== */
+/* Admissions — promote from the previous year, or add a new student   */
+/* ================================================================== */
+
+export function AdmissionScreen({ state, save }) {
+  const [mode, setMode] = useState("promote");
+  const currentYearCount = state.students.filter((s) => inYear(s, state.year)).length;
+
+  return (
+    <div>
+      <PageHead title="Admissions"
+        subtitle={`Bring students into ${state.year} — promote them from last year's roll, or add a student joining the school for the first time.`}>
+      </PageHead>
+
+      <div className="mb-6 inline-flex bg-white rounded-xl border border-slate-100 p-1 shadow-[0_1px_3px_rgba(15,23,41,0.04)]">
+        {[
+          ["promote", "Promote Students", Sparkles],
+          ["new", "New Admission", UserPlus],
+        ].map(([id, label, Icon]) => {
+          const on = mode === id;
+          return (
+            <button key={id} onClick={() => setMode(id)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition ${
+                on ? "bg-brand-600 text-white shadow-[0_6px_14px_-8px_rgba(91,61,245,0.9)]"
+                   : "text-slate-500 hover:text-slate-700"}`}>
+              <Icon size={15} /> {label}
+            </button>
+          );
+        })}
+      </div>
+
+      {mode === "promote"
+        ? <PromoteTab state={state} save={save} />
+        : <NewAdmissionTab state={state} save={save} />}
+
+      <p className="text-xs text-slate-400 mt-6 max-w-2xl leading-relaxed">
+        {currentYearCount} student{currentYearCount === 1 ? "" : "s"} currently in {state.year}.
+      </p>
+    </div>
+  );
+}
+
+function PromoteTab({ state, save }) {
+  const years = useMemo(
+    () => [...new Set(state.students.map((s) => s.year).filter((y) => y && y !== state.year))]
+      .sort().reverse(),
+    [state.students, state.year],
+  );
+  const [sourceYearPick, setSourceYearPick] = useState("");
+  const sourceYear = sourceYearPick || years[0] || "";
+
+  const [selected, setSelected] = useState(() => new Set());
+  const [sections, setSections] = useState({});
+  const [confirmed, setConfirmed] = useState(() => new Set());
+  const [done, setDone] = useState(null);
+
+  const currentYearAdmissionNos = useMemo(
+    () => new Set(state.students.filter((s) => inYear(s, state.year)).map((s) => s.admissionNo)),
+    [state.students, state.year],
+  );
+
+  const candidates = useMemo(
+    () => state.students.filter((s) => s.year === sourceYear),
+    [state.students, sourceYear],
+  );
+
+  const pending = candidates.filter((s) => !currentYearAdmissionNos.has(s.admissionNo));
+  const alreadyPromoted = candidates.length - pending.length;
+  const graduating = pending.filter((s) => isTerminalClass(s.className));
+  const promotable = pending.filter((s) => !isTerminalClass(s.className)).map((s) => ({
+    student: s,
+    target: nextClassName(s.className),
+    decisionNeeded: needsOptIn(nextClassName(s.className)),
+  }));
+
+  function toggle(admissionNo) {
+    const next = new Set(selected);
+    if (next.has(admissionNo)) next.delete(admissionNo); else next.add(admissionNo);
+    setSelected(next);
+  }
+
+  function toggleSelectAllReady() {
+    const ready = promotable.filter((p) => !p.decisionNeeded).map((p) => p.student.admissionNo);
+    const allSelected = ready.every((a) => selected.has(a));
+    const next = new Set(selected);
+    ready.forEach((a) => (allSelected ? next.delete(a) : next.add(a)));
+    setSelected(next);
+  }
+
+  function confirmOptIn(admissionNo) {
+    setConfirmed(new Set(confirmed).add(admissionNo));
+    toggle(admissionNo);
+  }
+
+  function commit() {
+    const chosen = promotable.filter((p) => selected.has(p.student.admissionNo));
+    const added = chosen.map(({ student: s, target }) => ({
+      id: uid(),
+      admissionNo: s.admissionNo,
+      name: s.name,
+      className: target,
+      section: sections[s.admissionNo] || s.section,
+      rollNo: "",
+      dob: s.dob,
+      guardianName: s.guardianName,
+      phone: s.phone,
+      email: s.email,
+      stopId: s.stopId,
+      admissionType: "continuing",
+      year: state.year,
+      // A new academic year is a fresh decision, not a silent carry-forward
+      // of last year's waiver.
+      concession: { type: "percent", value: 0, reason: "", includeTransport: false },
+    }));
+    save({ ...state, students: [...state.students, ...added] });
+    setDone({ created: added.length });
+    setSelected(new Set());
+    setConfirmed(new Set());
+  }
+
+  if (!years.length) {
+    return (
+      <div className={`${panel} border-dashed p-12 text-center`}>
+        <Sparkles className="mx-auto text-slate-300 mb-3" size={26} />
+        <p className="font-bold text-slate-700">No previous year to promote from</p>
+        <p className="text-sm text-slate-500 mt-1 max-w-md mx-auto">
+          Promotion needs a prior year's roll already in the system. Switch the
+          Academic Year in the sidebar to last year and import that roll under
+          Student Records, or use New Admission for students joining now.
+        </p>
+      </div>
+    );
+  }
+
+  const selectedReadyCount = promotable.filter((p) => selected.has(p.student.admissionNo)).length;
+
+  return (
+    <div>
+      {done && (
+        <div className="mb-5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl px-5 py-4 text-sm font-semibold">
+          Promoted {done.created} student{done.created === 1 ? "" : "s"} into {state.year}.
+        </div>
+      )}
+
+      <div className={`${panel} p-5 mb-5 flex flex-wrap items-end gap-4`}>
+        <div className="min-w-[200px]">
+          <label className={eyebrow}>Promote from</label>
+          <FilterSelect value={sourceYear} active
+            onChange={(e) => { setSourceYearPick(e.target.value); setSelected(new Set()); setConfirmed(new Set()); }}
+            className="mt-2">
+            {years.map((y) => <option key={y} value={y}>{y}</option>)}
+          </FilterSelect>
+        </div>
+        <div className="flex gap-5 text-sm">
+          <div>
+            <p className="text-[22px] font-extrabold tabular-nums leading-none">{promotable.length}</p>
+            <p className="eyebrow text-slate-400 mt-1">Ready to review</p>
+          </div>
+          <div>
+            <p className="text-[22px] font-extrabold tabular-nums leading-none text-slate-400">{graduating.length}</p>
+            <p className="eyebrow text-slate-400 mt-1">Completing school</p>
+          </div>
+          {alreadyPromoted > 0 && (
+            <div>
+              <p className="text-[22px] font-extrabold tabular-nums leading-none text-emerald-600">{alreadyPromoted}</p>
+              <p className="eyebrow text-slate-400 mt-1">Already in {state.year}</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {promotable.length === 0 && graduating.length === 0 ? (
+        <div className={`${panel} border-dashed p-10 text-center text-slate-400 font-semibold`}>
+          Everyone from {sourceYear} is already accounted for in {state.year}.
+        </div>
+      ) : (
+        <>
+          {promotable.length > 0 && (
+            <div className={`${panel} overflow-hidden mb-5`}>
+              <div className="px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                <h2 className="font-extrabold">Promote to the next class</h2>
+                <button onClick={toggleSelectAllReady}
+                  className="text-xs font-bold text-brand-600 hover:text-brand-700">
+                  Select / clear all ready
+                </button>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[820px]">
+                  <thead className="bg-slate-50/70">
+                    <tr>
+                      <th className={th} style={{ width: "5%" }} />
+                      <th className={th}>Student</th>
+                      <th className={th}>Moving</th>
+                      <th className={th}>New section</th>
+                      <th className={th}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {promotable.map(({ student: s, target, decisionNeeded }) => {
+                      const isConfirmed = confirmed.has(s.admissionNo);
+                      const isSelected = selected.has(s.admissionNo);
+                      return (
+                        <tr key={s.admissionNo} className="border-b border-slate-50 text-sm">
+                          <td className="px-4 py-2.5">
+                            <input type="checkbox"
+                              className="w-4 h-4 accent-brand-600"
+                              checked={isSelected}
+                              disabled={decisionNeeded && !isConfirmed}
+                              onChange={() => toggle(s.admissionNo)} />
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <div className="font-bold">{s.name}</div>
+                            <div className="text-xs text-slate-400 tabular-nums">{s.admissionNo}</div>
+                          </td>
+                          <td className="px-4 py-2.5 whitespace-nowrap">
+                            <span className="font-semibold text-slate-500">{s.className}-{s.section}</span>
+                            <ArrowRight size={13} className="inline mx-1.5 text-slate-300" />
+                            <span className="font-bold">{target}</span>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <input value={sections[s.admissionNo] ?? s.section}
+                              onChange={(e) => setSections({ ...sections, [s.admissionNo]: e.target.value })}
+                              className="w-20 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-center outline-none focus:border-brand-500" />
+                          </td>
+                          <td className="px-4 py-2.5">
+                            {decisionNeeded && !isConfirmed ? (
+                              <button onClick={() => confirmOptIn(s.admissionNo)}
+                                className="text-xs font-bold rounded-lg px-3 py-1.5 border-2 border-amber-300 bg-amber-50 text-amber-700 hover:border-amber-400">
+                                Confirm {target} admission
+                              </button>
+                            ) : decisionNeeded ? (
+                              <span className="text-xs font-bold rounded-lg px-3 py-1.5 border-2 border-emerald-300 bg-emerald-50 text-emerald-700">
+                                Confirmed
+                              </span>
+                            ) : (
+                              <span className="text-xs font-semibold text-slate-400">Ready</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="px-6 py-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs text-slate-500 max-w-md">
+                  Moving into 1st PU always needs the explicit confirmation above —
+                  many students leave for another board or college after X, so it is
+                  never bulk-selected automatically.
+                </p>
+                <button className={primary} disabled={!selectedReadyCount} onClick={commit}>
+                  <ArrowRight size={16} /> Promote {selectedReadyCount || ""} into {state.year}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {graduating.length > 0 && (
+            <div className={`${panel} overflow-hidden`}>
+              <div className="px-6 py-4 border-b border-slate-100 flex items-center gap-2">
+                <GraduationCap size={17} className="text-slate-400" />
+                <h2 className="font-extrabold">Completing school</h2>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[500px]">
+                  <thead className="bg-slate-50/70">
+                    <tr>
+                      <th className={th}>Student</th>
+                      <th className={th}>Class</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {graduating.map((s) => (
+                      <tr key={s.admissionNo} className="border-b border-slate-50 text-sm">
+                        <td className="px-4 py-2.5">
+                          <div className="font-bold">{s.name}</div>
+                          <div className="text-xs text-slate-400 tabular-nums">{s.admissionNo}</div>
+                        </td>
+                        <td className="px-4 py-2.5 text-slate-500 font-semibold">{s.className}-{s.section}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="px-6 py-3 text-xs text-slate-400 border-t border-slate-100">
+                2nd PU has no class above it — these students finish school rather than
+                promote. No admission action is needed here.
+              </p>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function NewAdmissionTab({ state, save }) {
+  const blank = { admissionNo: "", name: "", className: "", section: "A", dob: "",
+    guardianName: "", phone: "", email: "", stopId: "" };
+  const [f, setF] = useState(blank);
+  const [error, setError] = useState("");
+  const [done, setDone] = useState(null);
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const stops = allStops(state.routes);
+
+  const currentYearAdmissionNos = new Set(
+    state.students.filter((s) => inYear(s, state.year)).map((s) => s.admissionNo),
+  );
+
+  function submit(e) {
+    e.preventDefault();
+    setError(""); setDone(null);
+    const admissionNo = f.admissionNo.trim();
+    const name = f.name.trim();
+    if (!admissionNo) return setError("Enter an admission number.");
+    if (currentYearAdmissionNos.has(admissionNo))
+      return setError(`Admission number ${admissionNo} is already used in ${state.year}.`);
+    if (!name || name.length < 2) return setError("Enter the student's full name.");
+    if (!f.className) return setError("Choose a class.");
+
+    const student = {
+      id: uid(), admissionNo, name,
+      className: f.className, section: (f.section || "A").toUpperCase().slice(0, 10),
+      rollNo: "", dob: f.dob || null,
+      guardianName: f.guardianName.trim(), phone: f.phone.trim(), email: f.email.trim(),
+      stopId: f.stopId || null,
+      admissionType: "new", year: state.year,
+      concession: { type: "percent", value: 0, reason: "", includeTransport: false },
+    };
+    save({ ...state, students: [...state.students, student] });
+    setDone(student);
+    // Class and section are sticky for rapid back-to-back entry from the
+    // same admission form; everything specific to one child is cleared.
+    setF({ ...blank, className: f.className, section: f.section });
+  }
+
+  const recent = state.students
+    .filter((s) => inYear(s, state.year) && s.admissionType === "new")
+    .slice(-8).reverse();
+
+  return (
+    <div className="grid lg:grid-cols-[1fr_340px] gap-5 items-start">
+      <div className={`${panel} p-6`}>
+        <h2 className="text-lg font-extrabold mb-1">New admission for {state.year}</h2>
+        <p className="text-sm text-slate-500 mb-5">
+          For a student joining the school for the first time. The admission
+          fee applies automatically, since it's charged only on first entry.
+        </p>
+
+        {error && (
+          <div className="mb-4 flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm font-semibold">
+            <AlertTriangle size={15} className="mt-0.5 shrink-0" /> {error}
+          </div>
+        )}
+        {done && (
+          <div className="mb-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl px-4 py-3 text-sm font-semibold">
+            Added {done.name} to {done.className}-{done.section}.
+          </div>
+        )}
+
+        <form onSubmit={submit} className="grid sm:grid-cols-2 gap-4">
+          <div>
+            <label className={eyebrow}>Admission no.<span className="text-red-500"> *</span></label>
+            <input className={`${field} mt-2`} value={f.admissionNo} onChange={set("admissionNo")}
+              placeholder="2026/0042" />
+          </div>
+          <div>
+            <label className={eyebrow}>Full name<span className="text-red-500"> *</span></label>
+            <input className={`${field} mt-2`} value={f.name} onChange={set("name")}
+              placeholder="Ananya Krishnamurthy" />
+          </div>
+          <div>
+            <label className={eyebrow}>Class<span className="text-red-500"> *</span></label>
+            <FilterSelect value={f.className} active={Boolean(f.className)} className="mt-2"
+              onChange={(e) => setF({ ...f, className: e.target.value })}>
+              <option value="">Choose a class</option>
+              {CLASSES.map((c) => <option key={c.name} value={c.name}>{c.name} — {c.stage}</option>)}
+            </FilterSelect>
+          </div>
+          <div>
+            <label className={eyebrow}>Section</label>
+            <input className={`${field} mt-2`} value={f.section} onChange={set("section")} />
+          </div>
+          <div>
+            <label className={eyebrow}>Date of birth</label>
+            <input type="date" className={`${field} mt-2`} value={f.dob || ""} onChange={set("dob")} />
+          </div>
+          <div>
+            <label className={eyebrow}>Bus stop</label>
+            <FilterSelect value={f.stopId} active={Boolean(f.stopId)} className="mt-2"
+              onChange={(e) => setF({ ...f, stopId: e.target.value })}>
+              <option value="">No bus</option>
+              {stops.map((st) => <option key={st.id} value={st.id}>{st.routeCode} · {st.name}</option>)}
+            </FilterSelect>
+          </div>
+          <div>
+            <label className={eyebrow}>Guardian name</label>
+            <input className={`${field} mt-2`} value={f.guardianName} onChange={set("guardianName")} />
+          </div>
+          <div>
+            <label className={eyebrow}>Phone</label>
+            <input className={`${field} mt-2`} value={f.phone} onChange={set("phone")} inputMode="numeric" />
+          </div>
+          <div className="sm:col-span-2">
+            <label className={eyebrow}>Email</label>
+            <input className={`${field} mt-2`} value={f.email} onChange={set("email")} type="email" />
+          </div>
+          <div className="sm:col-span-2">
+            <button type="submit" className={primary}>
+              <UserPlus size={16} /> Add student
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div className={`${panel} overflow-hidden`}>
+        <div className="px-5 py-4 border-b border-slate-100">
+          <h2 className="font-extrabold text-sm">Added this session</h2>
+        </div>
+        {recent.length === 0 ? (
+          <p className="px-5 py-8 text-center text-sm text-slate-400 font-semibold">
+            New admissions will appear here as you add them.
+          </p>
+        ) : (
+          <ul className="divide-y divide-slate-50">
+            {recent.map((s) => (
+              <li key={s.id} className="px-5 py-3">
+                <p className="font-bold text-sm">{s.name}</p>
+                <p className="eyebrow text-slate-400 mt-0.5">
+                  {s.className}-{s.section} · {s.admissionNo}
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ================================================================== */
 /* Import students — class chosen from a dropdown, no separate picker  */
 /* ================================================================== */
 
 export function ImportScreen({ state, save }) {
-  // Default to the first class with students already in it, else the first
-  // class on the ladder. Either way the dropdown is never empty on load.
+  // Default to the first class with students already in it this year, else
+  // the first class on the ladder. Either way the dropdown is never empty.
   const [klass, setKlass] = useState(
-    () => state.students[0]?.className || CLASSES[0].name,
+    () => state.students.find((s) => inYear(s, state.year))?.className || CLASSES[0].name,
   );
   return <ClassImport state={state} save={save} klass={klass} setKlass={setKlass} />;
 }
@@ -514,14 +991,18 @@ function ClassImport({ state, save, klass, setKlass }) {
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef(null);
 
+  // A duplicate is only real within the same year — a continuing student
+  // legitimately keeps their admission number when they move up a class.
+  const currentYearStudents = state.students.filter((s) => inYear(s, state.year));
+
   const rows = useMemo(() => {
     if (!map || !body.length) return [];
     return validateRows(body, map, {
-      existingAdmissionNos: state.students.map((s) => s.admissionNo),
+      existingAdmissionNos: currentYearStudents.map((s) => s.admissionNo),
       routes: state.routes,
       defaultClass: klass,
     });
-  }, [map, body, state.students, state.routes, klass]);
+  }, [map, body, currentYearStudents, state.routes, klass]);
 
   const good = rows.filter((r) => !r.errors.length);
   const bad = rows.filter((r) => r.errors.length);
@@ -557,7 +1038,7 @@ function ClassImport({ state, save, klass, setKlass }) {
       id: uid(), admissionNo: r.admissionNo, name: r.fullName,
       className: r.className, section: r.section, rollNo: r.rollNo, dob: r.dob,
       guardianName: r.guardianName, phone: r.phone, email: r.email, stopId: r.stopId,
-      admissionType: "continuing",
+      admissionType: "continuing", year: state.year,
       concession: r.concession || { type: "percent", value: 0, reason: "", includeTransport: false },
     }));
     save({ ...state, students: [...state.students, ...added] });
@@ -574,9 +1055,9 @@ function ClassImport({ state, save, klass, setKlass }) {
 
   const shown = filter === "errors" ? bad : filter === "warnings" ? warned
     : filter === "ok" ? good : rows;
-  const existing = state.students.filter((s) => s.className === klass);
-  const total = state.students.length;
-  const countOf = (name) => state.students.filter((s) => s.className === name).length;
+  const existing = currentYearStudents.filter((s) => s.className === klass);
+  const total = currentYearStudents.length;
+  const countOf = (name) => currentYearStudents.filter((s) => s.className === name).length;
 
   // Switching class mid-upload would silently reassign whatever is on
   // screen against the wrong roll, so the picker resets the file instead.
@@ -588,24 +1069,23 @@ function ClassImport({ state, save, klass, setKlass }) {
   return (
     <div>
       <PageHead title="Student Records"
-        subtitle="Import your existing roll one class at a time. Choose the class below, then upload the sheet the office already keeps." />
+        subtitle={`Import your existing roll one class at a time for ${state.year}. Choose the class below, then upload the sheet the office already keeps.`} />
 
       <div className="grid sm:grid-cols-3 gap-5 mb-6">
         <StatCard icon={Users} tint="bg-brand-50 text-brand-600" label="Students on roll"
-          value={total} note="Across all classes" />
+          value={total} note={`In ${state.year}`} />
         <StatCard icon={FileSpreadsheet} tint="bg-emerald-50 text-emerald-600" label="Classes filled"
           value={CLASSES.filter((c) => countOf(c.name) > 0).length}
           note={`of ${CLASSES.length}`} noteTint="text-emerald-600" />
         <StatCard icon={Bus} tint="bg-amber-50 text-amber-600" label="On transport"
-          value={state.students.filter((s) => s.stopId).length} note="Assigned a stop"
+          value={currentYearStudents.filter((s) => s.stopId).length} note="Assigned a stop"
           noteTint="text-amber-600" />
       </div>
 
       <div className={`${panel} p-5 mb-6 flex flex-wrap items-end gap-4`}>
         <div className="min-w-[240px]">
           <label className={eyebrow}>Importing into</label>
-          <select className={`${field} mt-2 font-bold`} value={klass}
-            onChange={(e) => changeClass(e.target.value)}>
+          <FilterSelect value={klass} onChange={(e) => changeClass(e.target.value)} active className="mt-2">
             {CLASSES.map((c) => {
               const n = countOf(c.name);
               return (
@@ -614,7 +1094,7 @@ function ClassImport({ state, save, klass, setKlass }) {
                 </option>
               );
             })}
-          </select>
+          </FilterSelect>
         </div>
         <p className="text-xs text-slate-500 pb-2.5 max-w-md">
           Every row in the file below goes into <b className="text-slate-700">{klass}</b>{" "}
@@ -835,6 +1315,7 @@ export function ConcessionScreen({ state, save }) {
   const [classFilter, setClassFilter] = useState("");
   const [sectionFilter, setSectionFilter] = useState("");
   const stops = allStops(state.routes);
+  const currentYearStudents = state.students.filter((s) => inYear(s, state.year));
 
   const patchStudent = (id, changes) =>
     save({ ...state, students: state.students.map((s) => (s.id === id ? { ...s, ...changes } : s)) });
@@ -847,7 +1328,7 @@ export function ConcessionScreen({ state, save }) {
   // that doesn't exist in that class.
   const sectionsForClass = classFilter
     ? [...new Set(
-        state.students.filter((s) => s.className === classFilter).map((s) => s.section),
+        currentYearStudents.filter((s) => s.className === classFilter).map((s) => s.section),
       )].sort()
     : [];
 
@@ -856,7 +1337,7 @@ export function ConcessionScreen({ state, save }) {
     setSectionFilter("");
   }
 
-  const shown = state.students.filter((s) => {
+  const shown = currentYearStudents.filter((s) => {
     if (classFilter && s.className !== classFilter) return false;
     if (sectionFilter && s.section !== sectionFilter) return false;
     if (onlyWith && !(s.concession?.value > 0)) return false;
@@ -873,13 +1354,13 @@ export function ConcessionScreen({ state, save }) {
              net: a.net + f.net, count: a.count + (f.concession > 0 ? 1 : 0) };
   }, { gross: 0, concession: 0, net: 0, count: 0 });
 
-  if (!state.students.length) {
+  if (!currentYearStudents.length) {
     return (
       <div>
         <PageHead title="Fees & Concessions"
           subtitle="Once students are imported, this is where each one's discount is set." />
         <div className={`${panel} border-dashed p-12 text-center text-slate-400 font-semibold`}>
-          No students yet. Import your roll first.
+          No students in {state.year} yet. Add them under Admissions or Student Records.
         </div>
       </div>
     );
@@ -893,7 +1374,7 @@ export function ConcessionScreen({ state, save }) {
       <div className="grid sm:grid-cols-4 gap-5 mb-6">
         <StatCard icon={Users} tint="bg-brand-50 text-brand-600" label="Students"
           value={shown.length}
-          note={shown.length === state.students.length ? "On the roll" : `Of ${state.students.length} on the roll`} />
+          note={shown.length === currentYearStudents.length ? `On the ${state.year} roll` : `Of ${currentYearStudents.length} in ${state.year}`} />
         <StatCard icon={IndianRupee} tint="bg-slate-100 text-slate-500" label="Gross fees"
           value={inr(totals.gross)} note="Before concessions" />
         <StatCard icon={Percent} tint="bg-amber-50 text-amber-600" label="Concessions"
@@ -903,32 +1384,31 @@ export function ConcessionScreen({ state, save }) {
       </div>
 
       <div className="flex flex-wrap gap-2.5 mb-5">
-        <select className={`${field} w-auto min-w-[160px] font-semibold`} value={classFilter}
-          onChange={(e) => changeClass(e.target.value)}>
+        <FilterSelect value={classFilter} onChange={(e) => changeClass(e.target.value)}
+          active={Boolean(classFilter)} className="min-w-[170px]">
           <option value="">All classes</option>
           {CLASSES.map((c) => (
             <option key={c.name} value={c.name}>{c.name}</option>
           ))}
-        </select>
-        <select className={`${field} w-auto min-w-[140px] font-semibold disabled:bg-slate-50 disabled:text-slate-300`}
-          value={sectionFilter} disabled={!classFilter}
-          onChange={(e) => setSectionFilter(e.target.value)}>
+        </FilterSelect>
+        <FilterSelect value={sectionFilter} onChange={(e) => setSectionFilter(e.target.value)}
+          disabled={!classFilter} active={Boolean(sectionFilter)} className="min-w-[170px]">
           <option value="">{classFilter ? "All sections" : "Select a class first"}</option>
           {sectionsForClass.map((sec) => (
             <option key={sec} value={sec}>Section {sec}</option>
           ))}
-        </select>
+        </FilterSelect>
         <input className={`${field} max-w-xs`} value={query} placeholder="Find by name or admission no."
           onChange={(e) => setQuery(e.target.value)} />
         <button onClick={() => setOnlyWith(!onlyWith)}
-          className={`text-sm font-semibold rounded-xl px-4 py-2.5 border transition ${
-            onlyWith ? "bg-brand-50 border-brand-500 text-brand-600"
-                     : "bg-white border-slate-200 text-slate-500 hover:border-slate-300"}`}>
+          className={`text-sm font-bold rounded-xl px-4 py-2.5 border-2 transition ${
+            onlyWith ? "bg-brand-50 border-brand-400 text-brand-700"
+                     : "bg-white border-slate-200 text-slate-600 hover:border-brand-300"}`}>
           With a concession
         </button>
         {(classFilter || sectionFilter || query || onlyWith) && (
           <button onClick={() => { setClassFilter(""); setSectionFilter(""); setQuery(""); setOnlyWith(false); }}
-            className="text-sm font-semibold rounded-xl px-4 py-2.5 text-slate-400 hover:text-slate-600">
+            className="text-sm font-semibold rounded-xl px-4 py-2.5 text-slate-400 hover:text-red-500">
             Clear filters
           </button>
         )}
