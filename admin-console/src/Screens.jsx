@@ -538,7 +538,7 @@ function CopyPanel({ active, onCopy, onCancel }) {
 /* Admissions — promote from the previous year, or add a new student   */
 /* ================================================================== */
 
-export function AdmissionScreen({ state, save }) {
+export function AdmissionScreen({ state, save, onPaid }) {
   const [mode, setMode] = useState("promote");
   const currentYearCount = state.students.filter((s) => inYear(s, state.year)).length;
 
@@ -566,8 +566,8 @@ export function AdmissionScreen({ state, save }) {
       </div>
 
       {mode === "promote"
-        ? <PromoteTab state={state} save={save} />
-        : <NewAdmissionTab state={state} save={save} />}
+        ? <PromoteTab state={state} save={save} onPaid={onPaid} />
+        : <NewAdmissionTab state={state} save={save} onPaid={onPaid} />}
 
       <p className="text-xs text-slate-400 mt-6 max-w-2xl leading-relaxed">
         {currentYearCount} student{currentYearCount === 1 ? "" : "s"} currently in {state.year}.
@@ -576,7 +576,7 @@ export function AdmissionScreen({ state, save }) {
   );
 }
 
-function PromoteTab({ state, save }) {
+function PromoteTab({ state, save, onPaid }) {
   const years = useMemo(
     () => [...new Set(state.students.map((s) => s.year).filter((y) => y && y !== state.year))]
       .sort().reverse(),
@@ -643,6 +643,9 @@ function PromoteTab({ state, save }) {
     };
     save({ ...state, students: [...state.students, record] });
     setJustPromoted({ name: s.name, target });
+    // Take the payment right here rather than sending staff off to hunt
+    // for this student again on a different screen.
+    if (onPaid) onPaid(record);
   }
 
   if (!years.length) {
@@ -663,8 +666,7 @@ function PromoteTab({ state, save }) {
     <div>
       {justPromoted && (
         <div className="mb-5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl px-5 py-4 text-sm font-semibold">
-          Promoted {justPromoted.name} to {justPromoted.target}. Take payment on the
-          Fees & Concessions screen to finish this admission.
+          Promoted {justPromoted.name} to {justPromoted.target}.
         </div>
       )}
 
@@ -812,7 +814,7 @@ function PromoteTab({ state, save }) {
   );
 }
 
-function NewAdmissionTab({ state, save }) {
+function NewAdmissionTab({ state, save, onPaid }) {
   const blank = { admissionNo: "", name: "", className: "", section: "A", dob: "",
     guardianName: "", phone: "", email: "", stopId: "" };
   const [f, setF] = useState(blank);
@@ -850,6 +852,9 @@ function NewAdmissionTab({ state, save }) {
     // Class and section are sticky for rapid back-to-back entry from the
     // same admission form; everything specific to one child is cleared.
     setF({ ...blank, className: f.className, section: f.section });
+    // Straight into payment collection — the parent is standing right
+    // there, no reason to make staff go find this student again.
+    if (onPaid) onPaid(student);
   }
 
   const recent = state.students
@@ -881,8 +886,7 @@ function NewAdmissionTab({ state, save }) {
         )}
         {done && (
           <div className="mb-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl px-4 py-3 text-sm font-semibold">
-            Added {done.name} to {done.className}-{done.section}. Take payment on
-            the Fees & Concessions screen to finish this admission.
+            Added {done.name} to {done.className}-{done.section}.
           </div>
         )}
 
@@ -1573,7 +1577,7 @@ export function ConcessionScreen({ state, save }) {
   );
 }
 
-function PaymentModal({ state, save, student, onClose }) {
+export function PaymentModal({ state, save, student, onClose }) {
   const fee = computeFee(student, state);
   const payments = state.payments
     .filter((p) => p.studentId === student.id && p.year === state.year)

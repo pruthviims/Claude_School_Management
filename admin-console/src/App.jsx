@@ -16,6 +16,7 @@ import {
   FeeScreen,
   FilterSelect,
   ImportScreen,
+  PaymentModal,
   SchoolScreen,
   TransportScreen,
 } from "./Screens";
@@ -105,6 +106,10 @@ export default function App() {
   const [signedIn, setSignedIn] = useState(false);
   const [showSetup, setShowSetup] = useState(!load());
   const [step, setStep] = useState("transport");
+  // Set the moment a student is added or promoted, from Admissions, so the
+  // payment window opens right there instead of sending staff off to find
+  // that student again on the Fees & Concessions screen.
+  const [payFor, setPayFor] = useState(null);
 
   useEffect(() => {
     if (!state) return;
@@ -247,7 +252,7 @@ export default function App() {
         )}
         {step === "transport" && <TransportScreen state={state} save={setState} />}
         {step === "fees" && <FeeScreen state={state} save={setState} />}
-        {step === "admissions" && <AdmissionScreen state={state} save={setState} />}
+        {step === "admissions" && <AdmissionScreen state={state} save={setState} onPaid={setPayFor} />}
         {step === "import" && <ImportScreen state={state} save={setState} />}
         {step === "concessions" && <ConcessionScreen state={state} save={setState} />}
 
@@ -256,6 +261,11 @@ export default function App() {
           sent anywhere and will not appear on another device.
         </p>
       </main>
+
+      {payFor && (
+        <PaymentModal state={state} save={setState} student={payFor}
+          onClose={() => setPayFor(null)} />
+      )}
     </div>
   );
 }
