@@ -1,22 +1,24 @@
 import React, { useEffect, useState } from "react";
 import {
   Bus,
+  FileSpreadsheet,
   LogOut,
   Percent,
   ReceiptIndianRupee,
   RefreshCw,
   School,
   Sparkles,
-  Users,
+  UserPlus,
 } from "lucide-react";
 import { Login, Setup } from "./Auth";
 import {
-  AdmissionScreen,
   ConcessionScreen,
   FeeScreen,
   FilterSelect,
   ImportScreen,
+  NewAdmissionTab,
   PaymentModal,
+  PromoteTab,
   SchoolScreen,
   TransportScreen,
 } from "./Screens";
@@ -80,25 +82,35 @@ function load() {
 // Bus Routes and Fee Structure share one sidebar entry — routes have to
 // exist before a fare can be attached to a class, so keeping them one click
 // apart makes that dependency obvious rather than splitting it across the
-// sidebar.
+// sidebar. Admissions, bulk import, promotion and the fee/payment roll are
+// grouped the same way: all four ultimately act on the same student record,
+// so one hub with four sub-tabs beats three separate top-level items that
+// each partly overlap with the others.
 const NAV = [
   { id: "school", label: "School Profile", Icon: School },
   { id: "feesSetup", label: "Fees Setup", Icon: ReceiptIndianRupee,
     group: ["transport", "fees"] },
-  { id: "admissions", label: "Admissions", Icon: Sparkles },
-  { id: "import", label: "Student Records", Icon: Users },
-  { id: "concessions", label: "Fees & Concessions", Icon: Percent },
+  { id: "students", label: "Admissions & Fees", Icon: Sparkles,
+    group: ["roll", "newadm", "bulkimport", "promote"] },
 ];
 
 // Screens where the working Academic Year actually matters. School Profile
-// manages the year as school metadata via its own field, and Admissions
-// has its own From/To (or Admitting into) year controls built into the
-// page, so both are excluded here to avoid a second, confusing selector.
-const YEAR_SCOPED_STEPS = new Set(["transport", "fees", "import", "concessions"]);
+// manages the year as school metadata via its own field. New Admission and
+// Promote Students have their own contextual year controls built into the
+// page (From/To, or "Admitting into") rather than the shared top-bar one,
+// to avoid two year pickers on the same screen.
+const YEAR_SCOPED_STEPS = new Set(["transport", "fees", "roll", "bulkimport"]);
 
 const FEES_SUBTABS = [
   { id: "transport", label: "Bus Routes", Icon: Bus },
   { id: "fees", label: "Fee Structure", Icon: ReceiptIndianRupee },
+];
+
+const STUDENTS_SUBTABS = [
+  { id: "roll", label: "Fee Collection & Roll", Icon: Percent },
+  { id: "newadm", label: "New Admission", Icon: UserPlus },
+  { id: "bulkimport", label: "Bulk CSV Import", Icon: FileSpreadsheet },
+  { id: "promote", label: "Promote Students", Icon: Sparkles },
 ];
 
 export default function App() {
@@ -252,9 +264,26 @@ export default function App() {
         )}
         {step === "transport" && <TransportScreen state={state} save={setState} />}
         {step === "fees" && <FeeScreen state={state} save={setState} />}
-        {step === "admissions" && <AdmissionScreen state={state} save={setState} onPaid={setPayFor} />}
-        {step === "import" && <ImportScreen state={state} save={setState} />}
-        {step === "concessions" && <ConcessionScreen state={state} save={setState} />}
+
+        {STUDENTS_SUBTABS.some((t) => t.id === step) && (
+          <div className="mb-7 inline-flex flex-wrap bg-white rounded-xl border border-slate-100 p-1 shadow-[0_1px_3px_rgba(15,23,41,0.04)]">
+            {STUDENTS_SUBTABS.map((t) => {
+              const on = step === t.id;
+              return (
+                <button key={t.id} onClick={() => setStep(t.id)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold whitespace-nowrap transition ${
+                    on ? "bg-brand-600 text-white shadow-[0_6px_14px_-8px_rgba(91,61,245,0.9)]"
+                       : "text-slate-500 hover:text-slate-700"}`}>
+                  <t.Icon size={15} /> {t.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {step === "roll" && <ConcessionScreen state={state} save={setState} />}
+        {step === "newadm" && <NewAdmissionTab state={state} save={setState} onPaid={setPayFor} />}
+        {step === "bulkimport" && <ImportScreen state={state} save={setState} />}
+        {step === "promote" && <PromoteTab state={state} save={setState} onPaid={setPayFor} />}
 
         <p className="text-xs text-slate-400 mt-12 max-w-2xl leading-relaxed">
           A working prototype. Everything you enter stays in this browser — it is not

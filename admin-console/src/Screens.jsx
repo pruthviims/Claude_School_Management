@@ -125,6 +125,69 @@ export function FilterSelect({ value, onChange, disabled, active, className = ""
   );
 }
 
+/**
+ * A student's concession — type toggle, value, reason, and (when the
+ * student rides a bus) whether the discount extends to transport too.
+ * Used identically in the payment modal and the Fee Collection & Roll
+ * table; `compact` only changes sizing, never the fields or the update
+ * logic, so the two surfaces can't drift out of sync with each other.
+ */
+export function ConcessionEditor({ student, state, save, fee, compact = false }) {
+  const c = student.concession || { type: "percent", value: 0, reason: "", includeTransport: false };
+
+  function patch(changes) {
+    save({
+      ...state,
+      students: state.students.map((s) =>
+        s.id === student.id ? { ...s, concession: { ...c, ...changes } } : s),
+    });
+  }
+
+  return (
+    <div className={compact ? "" : "px-6 py-5 border-b border-slate-100"}>
+      {!compact && (
+        <div className="flex items-center justify-between mb-2">
+          <label className="eyebrow text-slate-400">Concession</label>
+          {fee.concession > 0 && (
+            <span className="text-xs font-bold text-amber-600">−{inr(fee.concession)} applied</span>
+          )}
+        </div>
+      )}
+      <div className="flex items-center gap-1.5">
+        <button onClick={() => patch({ type: c.type === "percent" ? "amount" : "percent" })}
+          className={`shrink-0 rounded-lg border text-slate-500 font-bold hover:border-brand-500 hover:text-brand-600 ${
+            compact ? "w-8 h-8 border-slate-200 text-xs" : "w-10 h-10 border-2 border-slate-200 text-sm"}`}
+          title="Switch between a percentage and a flat amount">
+          {c.type === "amount" ? "₹" : "%"}
+        </button>
+        <input inputMode="numeric" value={c.value || ""} placeholder="0"
+          className={`border rounded-lg text-right tabular-nums outline-none focus:border-brand-500 font-semibold ${
+            compact ? "w-20 border-slate-200 px-2.5 py-1.5 text-sm" : "w-24 border-2 border-slate-200 px-3 py-2.5 text-sm font-bold"}`}
+          onChange={(e) => {
+            let v = Math.max(0, +e.target.value || 0);
+            if (c.type !== "amount") v = Math.min(100, v);
+            patch({ value: v });
+          }} />
+        <select
+          className={`bg-white border rounded-lg outline-none focus:border-brand-500 text-sm font-medium flex-1 min-w-0 ${
+            compact ? "border-slate-200 px-2 py-1.5" : "border-2 border-slate-200 px-3 py-2.5"}`}
+          value={c.reason || ""} disabled={!(c.value > 0)}
+          onChange={(e) => patch({ reason: e.target.value })}>
+          <option value="">{compact ? "Reason —" : "Reason (optional)"}</option>
+          {CONCESSION_REASONS.map((r) => <option key={r}>{r}</option>)}
+        </select>
+      </div>
+      {c.value > 0 && fee.transport > 0 && (
+        <label className="flex items-center gap-1.5 mt-1.5 text-[11px] font-semibold text-slate-400">
+          <input type="checkbox" checked={!!c.includeTransport}
+            onChange={(e) => patch({ includeTransport: e.target.checked })} />
+          Also discount transport
+        </label>
+      )}
+    </div>
+  );
+}
+
 /* ================================================================== */
 /* School and admin                                                    */
 /* ================================================================== */
@@ -539,45 +602,7 @@ function CopyPanel({ active, onCopy, onCancel }) {
 /* Admissions — promote from the previous year, or add a new student   */
 /* ================================================================== */
 
-export function AdmissionScreen({ state, save, onPaid }) {
-  const [mode, setMode] = useState("promote");
-  const currentYearCount = state.students.filter((s) => inYear(s, state.year)).length;
-
-  return (
-    <div>
-      <PageHead title="Admissions"
-        subtitle={`Bring students into ${state.year} — promote them from last year's roll, or add a student joining the school for the first time.`}>
-      </PageHead>
-
-      <div className="mb-6 inline-flex bg-white rounded-xl border border-slate-100 p-1 shadow-[0_1px_3px_rgba(15,23,41,0.04)]">
-        {[
-          ["promote", "Promote Students", Sparkles],
-          ["new", "New Admission", UserPlus],
-        ].map(([id, label, Icon]) => {
-          const on = mode === id;
-          return (
-            <button key={id} onClick={() => setMode(id)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition ${
-                on ? "bg-brand-600 text-white shadow-[0_6px_14px_-8px_rgba(91,61,245,0.9)]"
-                   : "text-slate-500 hover:text-slate-700"}`}>
-              <Icon size={15} /> {label}
-            </button>
-          );
-        })}
-      </div>
-
-      {mode === "promote"
-        ? <PromoteTab state={state} save={save} onPaid={onPaid} />
-        : <NewAdmissionTab state={state} save={save} onPaid={onPaid} />}
-
-      <p className="text-xs text-slate-400 mt-6 max-w-2xl leading-relaxed">
-        {currentYearCount} student{currentYearCount === 1 ? "" : "s"} currently in {state.year}.
-      </p>
-    </div>
-  );
-}
-
-function PromoteTab({ state, save, onPaid }) {
+export function PromoteTab({ state, save, onPaid }) {
   const years = useMemo(
     () => [...new Set(state.students.map((s) => s.year).filter((y) => y && y !== state.year))]
       .sort().reverse(),
@@ -615,7 +640,7 @@ function PromoteTab({ state, save, onPaid }) {
   // already been promoted this cycle — closing the payment modal by
   // accident used to make a promoted student vanish from this screen
   // entirely, with no way back to their payment short of hunting for them
-  // on Fees & Concessions. Now the row just switches from "Promote" to a
+  // on Fee Collection & Roll. Now the row just switches from "Promote" to a
   // "Pay" action for whatever's still outstanding.
   const rows = byClass.filter((s) => !isTerminalClass(s.className)).map((s) => {
     const target = nextClassName(s.className);
@@ -666,20 +691,27 @@ function PromoteTab({ state, save, onPaid }) {
 
   if (!years.length) {
     return (
-      <div className={`${panel} border-dashed p-12 text-center`}>
-        <Sparkles className="mx-auto text-slate-300 mb-3" size={26} />
-        <p className="font-bold text-slate-700">No previous year to promote from</p>
-        <p className="text-sm text-slate-500 mt-1 max-w-md mx-auto">
-          Promotion needs a prior year's roll already in the system. Set "To"
-          below to last year and import that roll under Student Records, or
-          use New Admission for students joining now.
-        </p>
+      <div>
+        <PageHead title="Promote Students"
+          subtitle={`Bring continuing students into ${state.year} from last year's roll.`} />
+        <div className={`${panel} border-dashed p-12 text-center`}>
+          <Sparkles className="mx-auto text-slate-300 mb-3" size={26} />
+          <p className="font-bold text-slate-700">No previous year to promote from</p>
+          <p className="text-sm text-slate-500 mt-1 max-w-md mx-auto">
+            Promotion needs a prior year's roll already in the system. Set "To"
+            below to last year and import that roll under Bulk CSV Import, or
+            use New Admission for students joining now.
+          </p>
+        </div>
       </div>
     );
   }
 
   return (
     <div>
+      <PageHead title="Promote Students"
+        subtitle={`Bring continuing students into ${state.year} from last year's roll, one at a time as they're found.`} />
+
       {justPromoted && (
         <div className="mb-5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl px-5 py-4 text-sm font-semibold">
           Promoted {justPromoted.name} to {justPromoted.target}.
@@ -816,7 +848,7 @@ function PromoteTab({ state, save, onPaid }) {
               </div>
               <p className="px-6 py-3 text-xs text-slate-500 border-t border-slate-100 max-w-2xl">
                 Section carries forward automatically — reassign it later from
-                Student Records if the school reshuffles sections. A promoted
+                Fee Collection & Roll if the school reshuffles sections. A promoted
                 row stays here with a Pay button until it's settled, so
                 closing the payment window by accident never loses track of
                 who still owes.
@@ -865,7 +897,7 @@ function PromoteTab({ state, save, onPaid }) {
   );
 }
 
-function NewAdmissionTab({ state, save, onPaid }) {
+export function NewAdmissionTab({ state, save, onPaid }) {
   const blank = { name: "", className: "", dob: "",
     guardianName: "", phone: "", email: "", stopId: "" };
   const [f, setF] = useState(blank);
@@ -913,7 +945,10 @@ function NewAdmissionTab({ state, save, onPaid }) {
     .slice(-8).reverse();
 
   return (
-    <div className="grid lg:grid-cols-[1fr_340px] gap-5 items-start">
+    <div>
+      <PageHead title="New Admission"
+        subtitle="For a student joining the school for the first time." />
+      <div className="grid lg:grid-cols-[1fr_340px] gap-5 items-start">
       <div className={`${panel} p-6`}>
         <div className="flex flex-wrap items-end justify-between gap-4 mb-1">
           <h2 className="text-lg font-extrabold">New admission</h2>
@@ -926,10 +961,9 @@ function NewAdmissionTab({ state, save, onPaid }) {
           </div>
         </div>
         <p className="text-sm text-slate-500 mb-5">
-          For a student joining the school for the first time. The admission
-          fee applies automatically, since it's charged only on first entry.
-          Section isn't asked here — assign it later from Student Records
-          once class rosters are settled.
+          The admission fee applies automatically, since it's charged only on
+          first entry. Section isn't asked here — assign it later from Fee
+          Collection & Roll once class rosters are settled.
         </p>
 
         {error && (
@@ -1018,6 +1052,7 @@ function NewAdmissionTab({ state, save, onPaid }) {
           </ul>
         )}
       </div>
+    </div>
     </div>
   );
 }
@@ -1124,8 +1159,8 @@ function ClassImport({ state, save, klass, setKlass }) {
 
   return (
     <div>
-      <PageHead title="Student Records"
-        subtitle={`Import your existing roll one class at a time for ${state.year}. Choose the class below, then upload the sheet the office already keeps.`} />
+      <PageHead title="Bulk CSV Import"
+        subtitle={`Import a whole class's roll at once for ${state.year} — for a school's existing roster, not day-to-day admissions. Choose the class below, then upload the sheet the office already keeps.`} />
 
       <div className="grid sm:grid-cols-3 gap-5 mb-6">
         <StatCard icon={Users} tint="bg-brand-50 text-brand-600" label="Students on roll"
@@ -1222,8 +1257,8 @@ function ClassImport({ state, save, klass, setKlass }) {
                 )}
               </div>
               <p className="px-6 pt-3 text-xs text-slate-500 max-w-2xl">
-                Section isn't asked at admission time — assign or fix it here,
-                once class rosters are settled.
+                For reference while you import — section is assigned from Fee
+                Collection & Roll, once class rosters are settled.
               </p>
               <div className="overflow-x-auto">
                 <table className="w-full">
@@ -1237,17 +1272,10 @@ function ClassImport({ state, save, klass, setKlass }) {
                         className={`border-b border-slate-50 text-sm font-medium ${!s.section ? "bg-amber-50/40" : ""}`}>
                         <td className="px-5 py-2.5 tabular-nums text-slate-500">{s.admissionNo}</td>
                         <td className="px-5 py-2.5 font-semibold">{s.name}</td>
-                        <td className="px-5 py-1.5">
-                          <input value={s.section} placeholder="Assign"
-                            onChange={(e) => save({
-                              ...state,
-                              students: state.students.map((row) =>
-                                row.id === s.id
-                                  ? { ...row, section: e.target.value.toUpperCase().slice(0, 10) }
-                                  : row),
-                            })}
-                            className={`w-20 border rounded-lg px-2.5 py-1.5 text-sm font-bold text-center outline-none focus:border-brand-500 ${
-                              s.section ? "border-slate-200" : "border-amber-300 placeholder:text-amber-400 placeholder:font-semibold"}`} />
+                        <td className="px-5 py-2.5">
+                          {s.section
+                            ? <span className="font-bold">{s.section}</span>
+                            : <span className="text-xs font-semibold text-amber-600">Not assigned</span>}
                         </td>
                         <td className="px-5 py-2.5">{s.guardianName || "—"}</td>
                         <td className="px-5 py-2.5 tabular-nums">{s.phone || "—"}</td>
@@ -1397,8 +1425,6 @@ export function ConcessionScreen({ state, save }) {
 
   const patchStudent = (id, changes) =>
     save({ ...state, students: state.students.map((s) => (s.id === id ? { ...s, ...changes } : s)) });
-  const setConcession = (s, changes) =>
-    patchStudent(s.id, { concession: { ...s.concession, ...changes } });
 
   // Sections are free text from import, not a fixed list, so they are
   // derived from whoever is actually on the roll for the chosen class —
@@ -1437,10 +1463,10 @@ export function ConcessionScreen({ state, save }) {
   if (!currentYearStudents.length) {
     return (
       <div>
-        <PageHead title="Fees & Concessions"
-          subtitle="Once students are imported, this is where each one's discount is set and payments are collected." />
+        <PageHead title="Fee Collection & Roll"
+          subtitle="Every enrolled student for the year, with fees, concessions, and payment status in one place." />
         <div className={`${panel} border-dashed p-12 text-center text-slate-400 font-semibold`}>
-          No students in {state.year} yet. Add them under Admissions or Student Records.
+          No students in {state.year} yet. Add them under New Admission or Promote Students.
         </div>
       </div>
     );
@@ -1448,7 +1474,7 @@ export function ConcessionScreen({ state, save }) {
 
   return (
     <div>
-      <PageHead title="Fees & Concessions"
+      <PageHead title="Fee Collection & Roll"
         subtitle="Each fee is the class structure plus transport for the student's stop, less any concession. Collect payments and print receipts from the same row." />
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-5 mb-6">
@@ -1522,8 +1548,7 @@ export function ConcessionScreen({ state, save }) {
                 <th className={`${th} min-w-[190px]`}>Bus stop</th>
                 <th className={`${th} text-right min-w-[90px]`}>Transport</th>
                 <th className={`${th} text-right min-w-[90px]`}>Gross fee</th>
-                <th className={`${th} min-w-[170px]`}>Concession</th>
-                <th className={`${th} min-w-[160px]`}>Reason</th>
+                <th className={`${th} min-w-[240px]`}>Concession</th>
                 <th className={`${th} text-right min-w-[90px]`}>Discount</th>
                 <th className={`${th} text-right min-w-[110px]`}>Net payable</th>
                 <th className={`${th} text-right min-w-[90px]`}>Paid</th>
@@ -1534,7 +1559,6 @@ export function ConcessionScreen({ state, save }) {
             <tbody>
               {shown.map((s) => {
                 const fee = computeFee(s, state);
-                const c = s.concession || {};
                 const paid = paidByStudent(state, s);
                 const balance = fee.net - paid;
                 const receiptCount = state.payments.filter(
@@ -1573,37 +1597,8 @@ export function ConcessionScreen({ state, save }) {
                       {fee.transport ? inr(fee.transport) : <span className="text-slate-300">—</span>}
                     </td>
                     <td className="px-5 py-3 text-right tabular-nums font-semibold">{inr(fee.gross)}</td>
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          onClick={() => setConcession(s, { type: c.type === "percent" ? "amount" : "percent" })}
-                          className="w-8 h-8 shrink-0 rounded-lg border border-slate-200 text-slate-500 text-xs font-bold hover:border-brand-500 hover:text-brand-600"
-                          title="Switch between a percentage and a flat amount">
-                          {c.type === "amount" ? "₹" : "%"}
-                        </button>
-                        <input inputMode="numeric" value={c.value || ""} placeholder="0"
-                          className="w-20 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-right tabular-nums outline-none focus:border-brand-500"
-                          onChange={(e) => {
-                            let v = Math.max(0, +e.target.value || 0);
-                            if (c.type !== "amount") v = Math.min(100, v);
-                            setConcession(s, { value: v });
-                          }} />
-                      </div>
-                    </td>
-                    <td className="px-5 py-3">
-                      <select className={`${cellInput} border-slate-100 w-full`} value={c.reason || ""}
-                        disabled={!(c.value > 0)}
-                        onChange={(e) => setConcession(s, { reason: e.target.value })}>
-                        <option value="">—</option>
-                        {CONCESSION_REASONS.map((r) => <option key={r}>{r}</option>)}
-                      </select>
-                      {c.value > 0 && fee.transport > 0 && (
-                        <label className="flex items-center gap-1.5 mt-1.5 text-[11px] font-semibold text-slate-400">
-                          <input type="checkbox" checked={!!c.includeTransport}
-                            onChange={(e) => setConcession(s, { includeTransport: e.target.checked })} />
-                          also discount transport
-                        </label>
-                      )}
+                    <td className="px-5 py-2">
+                      <ConcessionEditor student={s} state={state} save={save} fee={fee} compact />
                     </td>
                     <td className="px-5 py-3 text-right tabular-nums font-semibold text-red-500">
                       {fee.concession ? `−${inr(fee.concession)}` : <span className="text-slate-300">—</span>}
@@ -1664,7 +1659,6 @@ export function PaymentModal({ state, save, student, onClose }) {
   // snapshot the modal happened to open with.
   const liveStudent = state.students.find((s) => s.id === student.id) || student;
   const fee = computeFee(liveStudent, state);
-  const c = liveStudent.concession || { type: "percent", value: 0, reason: "", includeTransport: false };
   const classLabel = liveStudent.section ? `${liveStudent.className}-${liveStudent.section}` : liveStudent.className;
 
   const payments = state.payments
@@ -1692,14 +1686,6 @@ export function PaymentModal({ state, save, student, onClose }) {
       // during render itself.
       queueMicrotask(() => setAmount(dueNow ? String(dueNow) : ""));
     }
-  }
-
-  function setConcession(changes) {
-    save({
-      ...state,
-      students: state.students.map((s) =>
-        s.id === liveStudent.id ? { ...s, concession: { ...c, ...changes } } : s),
-    });
   }
 
   function record() {
@@ -1764,41 +1750,7 @@ export function PaymentModal({ state, save, student, onClose }) {
           </button>
         </div>
 
-        <div className="px-6 py-5 border-b border-slate-100">
-          <div className="flex items-center justify-between mb-2">
-            <label className={eyebrow}>Concession</label>
-            {fee.concession > 0 && (
-              <span className="text-xs font-bold text-amber-600">−{inr(fee.concession)} applied</span>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => setConcession({ type: c.type === "percent" ? "amount" : "percent" })}
-              className="w-10 h-10 shrink-0 rounded-lg border-2 border-slate-200 text-slate-600 text-sm font-bold hover:border-brand-500 hover:text-brand-600"
-              title="Switch between a percentage and a flat amount">
-              {c.type === "amount" ? "₹" : "%"}
-            </button>
-            <input inputMode="numeric" value={c.value || ""} placeholder="0"
-              className="w-24 border-2 border-slate-200 rounded-lg px-3 py-2.5 text-sm font-bold text-right tabular-nums outline-none focus:border-brand-500"
-              onChange={(e) => {
-                let v = Math.max(0, +e.target.value || 0);
-                if (c.type !== "amount") v = Math.min(100, v);
-                setConcession({ value: v });
-              }} />
-            <select className={`${cellInput} border-2 border-slate-200 rounded-lg flex-1 py-2.5`}
-              value={c.reason || ""} disabled={!(c.value > 0)}
-              onChange={(e) => setConcession({ reason: e.target.value })}>
-              <option value="">Reason (optional)</option>
-              {CONCESSION_REASONS.map((r) => <option key={r}>{r}</option>)}
-            </select>
-          </div>
-          {c.value > 0 && fee.transport > 0 && (
-            <label className="flex items-center gap-1.5 mt-2 text-xs font-semibold text-slate-500">
-              <input type="checkbox" checked={!!c.includeTransport}
-                onChange={(e) => setConcession({ includeTransport: e.target.checked })} />
-              Also discount transport
-            </label>
-          )}
-        </div>
+        <ConcessionEditor student={liveStudent} state={state} save={save} fee={fee} />
 
         <div className="px-6 py-5 grid grid-cols-3 gap-4 border-b border-slate-100 text-sm">
           <div>
