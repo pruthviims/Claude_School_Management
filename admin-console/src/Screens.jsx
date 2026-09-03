@@ -585,6 +585,7 @@ function PromoteTab({ state, save, onPaid }) {
   );
   const [sourceYearPick, setSourceYearPick] = useState("");
   const sourceYear = sourceYearPick || years[0] || "";
+  const [classFilter, setClassFilter] = useState("");
   const [query, setQuery] = useState("");
   const [justPromoted, setJustPromoted] = useState(null);
 
@@ -596,30 +597,42 @@ function PromoteTab({ state, save, onPaid }) {
     if (sourceYearPick === next) setSourceYearPick("");
   }
 
-  const currentYearAdmissionNos = useMemo(
-    () => new Set(state.students.filter((s) => inYear(s, state.year)).map((s) => s.admissionNo)),
-    [state.students, state.year],
-  );
-
   const candidates = useMemo(
     () => state.students.filter((s) => s.year === sourceYear),
     [state.students, sourceYear],
   );
 
-  const pending = candidates.filter((s) => !currentYearAdmissionNos.has(s.admissionNo));
-  const alreadyPromoted = candidates.length - pending.length;
-  const graduatingAll = pending.filter((s) => isTerminalClass(s.className));
-  const promotableAll = pending.filter((s) => !isTerminalClass(s.className)).map((s) => ({
-    student: s,
-    target: nextClassName(s.className),
-    decisionNeeded: needsOptIn(nextClassName(s.className)),
-  }));
+  const sourceClasses = useMemo(
+    () => [...new Set(candidates.map((s) => s.className))]
+      .sort((a, b) => CLASSES.findIndex((c) => c.name === a) - CLASSES.findIndex((c) => c.name === b)),
+    [candidates],
+  );
+
+  const byClass = classFilter ? candidates.filter((s) => s.className === classFilter) : candidates;
+  const graduatingAll = byClass.filter((s) => isTerminalClass(s.className));
+
+  // Every non-terminal candidate stays visible whether or not they've
+  // already been promoted this cycle — closing the payment modal by
+  // accident used to make a promoted student vanish from this screen
+  // entirely, with no way back to their payment short of hunting for them
+  // on Fees & Concessions. Now the row just switches from "Promote" to a
+  // "Pay" action for whatever's still outstanding.
+  const rows = byClass.filter((s) => !isTerminalClass(s.className)).map((s) => {
+    const target = nextClassName(s.className);
+    const newRecord = state.students.find(
+      (ns) => ns.year === state.year && ns.admissionNo === s.admissionNo,
+    );
+    return { student: s, target, decisionNeeded: needsOptIn(target), newRecord };
+  });
+
+  const promotableAll = rows.filter((r) => !r.newRecord);
+  const promotedAll = rows.filter((r) => r.newRecord);
 
   // A parent is standing at the counter for one child, not a batch — search
   // narrows straight to that student rather than scrolling a whole roll.
   const q = query.trim().toLowerCase();
   const matches = (s) => !q || s.name.toLowerCase().includes(q) || s.admissionNo.toLowerCase().includes(q);
-  const promotable = promotableAll.filter((p) => matches(p.student));
+  const visibleRows = rows.filter((r) => matches(r.student));
   const graduating = graduatingAll.filter(matches);
 
   function promoteOne(s, target) {
@@ -677,7 +690,7 @@ function PromoteTab({ state, save, onPaid }) {
         <div className="min-w-[150px]">
           <label className={eyebrow}>From</label>
           <FilterSelect value={sourceYear} active
-            onChange={(e) => { setSourceYearPick(e.target.value); setJustPromoted(null); }}
+            onChange={(e) => { setSourceYearPick(e.target.value); setClassFilter(""); setJustPromoted(null); }}
             className="mt-2">
             {years.map((y) => <option key={y} value={y}>{y}</option>)}
           </FilterSelect>
@@ -690,6 +703,14 @@ function PromoteTab({ state, save, onPaid }) {
             {ACADEMIC_YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
           </FilterSelect>
         </div>
+        <div className="min-w-[160px]">
+          <label className={eyebrow}>Class</label>
+          <FilterSelect value={classFilter} onChange={(e) => setClassFilter(e.target.value)}
+            active={Boolean(classFilter)} className="mt-2">
+            <option value="">All classes</option>
+            {sourceClasses.map((c) => <option key={c} value={c}>{c}</option>)}
+          </FilterSelect>
+        </div>
         <div className="flex gap-5 text-sm sm:ml-auto">
           <div>
             <p className="text-[22px] font-extrabold tabular-nums leading-none">{promotableAll.length}</p>
@@ -699,32 +720,34 @@ function PromoteTab({ state, save, onPaid }) {
             <p className="text-[22px] font-extrabold tabular-nums leading-none text-slate-400">{graduatingAll.length}</p>
             <p className="eyebrow text-slate-400 mt-1">Completing school</p>
           </div>
-          {alreadyPromoted > 0 && (
+          {promotedAll.length > 0 && (
             <div>
-              <p className="text-[22px] font-extrabold tabular-nums leading-none text-emerald-600">{alreadyPromoted}</p>
+              <p className="text-[22px] font-extrabold tabular-nums leading-none text-emerald-600">{promotedAll.length}</p>
               <p className="eyebrow text-slate-400 mt-1">Already in {state.year}</p>
             </div>
           )}
         </div>
       </div>
 
-      {promotableAll.length > 0 || graduatingAll.length > 0 ? (
+      {rows.length > 0 || graduatingAll.length > 0 ? (
         <input className={`${field} max-w-sm mb-5`} value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Find the student at the counter — name or admission no." />
       ) : null}
 
-      {promotableAll.length === 0 && graduatingAll.length === 0 ? (
+      {rows.length === 0 && graduatingAll.length === 0 ? (
         <div className={`${panel} border-dashed p-10 text-center text-slate-400 font-semibold`}>
-          Everyone from {sourceYear} is already accounted for in {state.year}.
+          {classFilter
+            ? `No students from ${classFilter} in ${sourceYear}.`
+            : `Everyone from ${sourceYear} is already accounted for in ${state.year}.`}
         </div>
-      ) : promotable.length === 0 && graduating.length === 0 ? (
+      ) : visibleRows.length === 0 && graduating.length === 0 ? (
         <div className={`${panel} border-dashed p-10 text-center text-slate-400 font-semibold`}>
           No one in {sourceYear} matches "{query}".
         </div>
       ) : (
         <>
-          {promotable.length > 0 && (
+          {visibleRows.length > 0 && (
             <div className={`${panel} overflow-hidden mb-5`}>
               <div className="px-6 py-4 border-b border-slate-100">
                 <h2 className="font-extrabold">Promote to the next class</h2>
@@ -739,43 +762,64 @@ function PromoteTab({ state, save, onPaid }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {promotable.map(({ student: s, target, decisionNeeded }) => (
-                      <tr key={s.admissionNo} className="border-b border-slate-50 text-sm">
-                        <td className="px-4 py-2.5">
-                          <div className="font-bold">{s.name}</div>
-                          <div className="text-xs text-slate-400 tabular-nums">{s.admissionNo}</div>
-                        </td>
-                        <td className="px-4 py-2.5 whitespace-nowrap">
-                          <span className="font-semibold text-slate-500">
-                            {s.className}{s.section ? `-${s.section}` : ""}
-                          </span>
-                          <ArrowRight size={13} className="inline mx-1.5 text-slate-300" />
-                          <span className="font-bold">{target}{s.section ? `-${s.section}` : ""}</span>
-                          {!s.section && (
-                            <span className="ml-2 text-[11px] font-semibold text-slate-400">
-                              (section not yet assigned)
+                    {visibleRows.map(({ student: s, target, decisionNeeded, newRecord }) => {
+                      const fee = newRecord ? computeFee(newRecord, state) : null;
+                      const paid = newRecord ? paidByStudent(state, newRecord) : 0;
+                      const balance = fee ? fee.net - paid : 0;
+                      return (
+                        <tr key={s.admissionNo} className="border-b border-slate-50 text-sm">
+                          <td className="px-4 py-2.5">
+                            <div className="font-bold">{s.name}</div>
+                            <div className="text-xs text-slate-400 tabular-nums">{s.admissionNo}</div>
+                          </td>
+                          <td className="px-4 py-2.5 whitespace-nowrap">
+                            <span className="font-semibold text-slate-500">
+                              {s.className}{s.section ? `-${s.section}` : ""}
                             </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2.5 text-right">
-                          <button onClick={() => promoteOne(s, target)}
-                            className={decisionNeeded
-                              ? "text-xs font-bold rounded-lg px-3 py-2 border-2 border-amber-300 bg-amber-50 text-amber-700 hover:border-amber-400 whitespace-nowrap"
-                              : "text-xs font-bold rounded-lg px-3 py-2 bg-brand-600 text-white hover:bg-brand-700 whitespace-nowrap"}>
-                            {decisionNeeded ? `Confirm ${target} & Promote` : "Promote"}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                            <ArrowRight size={13} className="inline mx-1.5 text-slate-300" />
+                            <span className="font-bold">{target}{s.section ? `-${s.section}` : ""}</span>
+                            {!s.section && (
+                              <span className="ml-2 text-[11px] font-semibold text-slate-400">
+                                (section not yet assigned)
+                              </span>
+                            )}
+                            {newRecord && (
+                              <span className="ml-2 inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600">
+                                <Check size={11} /> Promoted
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            {!newRecord ? (
+                              <button onClick={() => promoteOne(s, target)}
+                                className={decisionNeeded
+                                  ? "text-xs font-bold rounded-lg px-3 py-2 border-2 border-amber-300 bg-amber-50 text-amber-700 hover:border-amber-400 whitespace-nowrap"
+                                  : "text-xs font-bold rounded-lg px-3 py-2 bg-brand-600 text-white hover:bg-brand-700 whitespace-nowrap"}>
+                                {decisionNeeded ? `Confirm ${target} & Promote` : "Promote"}
+                              </button>
+                            ) : balance > 0 ? (
+                              <button onClick={() => onPaid && onPaid(newRecord)}
+                                className="text-xs font-bold rounded-lg px-3 py-2 bg-brand-600 text-white hover:bg-brand-700 whitespace-nowrap flex items-center gap-1.5 ml-auto">
+                                <Wallet size={13} /> Pay {inr(balance)}
+                              </button>
+                            ) : (
+                              <span className="text-xs font-bold rounded-lg px-3 py-2 border border-emerald-200 bg-emerald-50 text-emerald-700 whitespace-nowrap">
+                                Paid
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
               <p className="px-6 py-3 text-xs text-slate-500 border-t border-slate-100 max-w-2xl">
                 Section carries forward automatically — reassign it later from
-                Student Records if the school reshuffles sections. Each student
-                is promoted one at a time as they're found; moving into 1st PU
-                is worded as its own confirmation rather than a plain "Promote",
-                since many students leave for another board or college after X.
+                Student Records if the school reshuffles sections. A promoted
+                row stays here with a Pay button until it's settled, so
+                closing the payment window by accident never loses track of
+                who still owes.
               </p>
             </div>
           )}
@@ -801,7 +845,9 @@ function PromoteTab({ state, save, onPaid }) {
                           <div className="font-bold">{s.name}</div>
                           <div className="text-xs text-slate-400 tabular-nums">{s.admissionNo}</div>
                         </td>
-                        <td className="px-4 py-2.5 text-slate-500 font-semibold">{s.className}-{s.section}</td>
+                        <td className="px-4 py-2.5 text-slate-500 font-semibold">
+                          {s.className}{s.section ? `-${s.section}` : ""}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1467,21 +1513,22 @@ export function ConcessionScreen({ state, save }) {
           </p>
         ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1280px]">
+          <table className="w-full min-w-[1420px]">
             <thead className="bg-slate-50/70">
               <tr>
-                <th className={th}>Student info</th>
-                <th className={th}>Class</th>
-                <th className={th}>Bus stop</th>
-                <th className={`${th} text-right`}>Transport</th>
-                <th className={`${th} text-right`}>Gross fee</th>
-                <th className={th}>Concession</th>
-                <th className={th}>Reason</th>
-                <th className={`${th} text-right`}>Discount</th>
-                <th className={`${th} text-right`}>Net payable</th>
-                <th className={`${th} text-right`}>Paid</th>
-                <th className={`${th} text-right`}>Balance</th>
-                <th className={th} />
+                <th className={`${th} min-w-[190px]`}>Student info</th>
+                <th className={`${th} min-w-[70px]`}>Class</th>
+                <th className={`${th} min-w-[90px]`}>Section</th>
+                <th className={`${th} min-w-[190px]`}>Bus stop</th>
+                <th className={`${th} text-right min-w-[90px]`}>Transport</th>
+                <th className={`${th} text-right min-w-[90px]`}>Gross fee</th>
+                <th className={`${th} min-w-[170px]`}>Concession</th>
+                <th className={`${th} min-w-[160px]`}>Reason</th>
+                <th className={`${th} text-right min-w-[90px]`}>Discount</th>
+                <th className={`${th} text-right min-w-[110px]`}>Net payable</th>
+                <th className={`${th} text-right min-w-[90px]`}>Paid</th>
+                <th className={`${th} text-right min-w-[100px]`}>Balance</th>
+                <th className={`${th} min-w-[110px]`} />
               </tr>
             </thead>
             <tbody>
@@ -1506,14 +1553,15 @@ export function ConcessionScreen({ state, save }) {
                         </span>
                       </div>
                     </td>
-                    <td className="px-5 py-3 whitespace-nowrap font-semibold">
-                      {s.className}
-                      {s.section
-                        ? `-${s.section}`
-                        : <span className="ml-1.5 text-[11px] font-bold text-amber-600 align-middle">no section</span>}
+                    <td className="px-5 py-3 whitespace-nowrap font-semibold">{s.className}</td>
+                    <td className="px-5 py-1.5">
+                      <input value={s.section} placeholder="Assign"
+                        onChange={(e) => patchStudent(s.id, { section: e.target.value.toUpperCase().slice(0, 10) })}
+                        className={`w-16 border rounded-lg px-2 py-1.5 text-sm font-bold text-center outline-none focus:border-brand-500 ${
+                          s.section ? "border-slate-200" : "border-amber-300 placeholder:text-amber-400 placeholder:font-semibold"}`} />
                     </td>
                     <td className="px-5 py-3">
-                      <select className={`${cellInput} border-slate-100`} value={s.stopId || ""}
+                      <select className={`${cellInput} border-slate-100 w-full`} value={s.stopId || ""}
                         onChange={(e) => patchStudent(s.id, { stopId: e.target.value || null })}>
                         <option value="">No bus</option>
                         {stops.map((st) => (
@@ -1543,7 +1591,7 @@ export function ConcessionScreen({ state, save }) {
                       </div>
                     </td>
                     <td className="px-5 py-3">
-                      <select className={`${cellInput} border-slate-100`} value={c.reason || ""}
+                      <select className={`${cellInput} border-slate-100 w-full`} value={c.reason || ""}
                         disabled={!(c.value > 0)}
                         onChange={(e) => setConcession(s, { reason: e.target.value })}>
                         <option value="">—</option>
@@ -1610,19 +1658,49 @@ export function ConcessionScreen({ state, save }) {
 }
 
 export function PaymentModal({ state, save, student, onClose }) {
-  const fee = computeFee(student, state);
+  // Re-derive from state rather than trusting the prop as-is: a concession
+  // edited inside this modal updates state.students, and the fee
+  // calculation below needs to see that update immediately, not the
+  // snapshot the modal happened to open with.
+  const liveStudent = state.students.find((s) => s.id === student.id) || student;
+  const fee = computeFee(liveStudent, state);
+  const c = liveStudent.concession || { type: "percent", value: 0, reason: "", includeTransport: false };
+  const classLabel = liveStudent.section ? `${liveStudent.className}-${liveStudent.section}` : liveStudent.className;
+
   const payments = state.payments
-    .filter((p) => p.studentId === student.id && p.year === state.year)
+    .filter((p) => p.studentId === liveStudent.id && p.year === state.year)
     .sort((a, b) => b.receivedOn.localeCompare(a.receivedOn));
   const paid = payments.reduce((a, p) => a + p.amount, 0);
   const rawBalance = fee.net - paid;
   const dueNow = Math.max(0, rawBalance);
 
   const [amount, setAmount] = useState(dueNow ? String(dueNow) : "");
+  const [amountTouched, setAmountTouched] = useState(false);
   const [mode, setMode] = useState("cash");
   const [reference, setReference] = useState("");
   const [error, setError] = useState("");
   const [justRecorded, setJustRecorded] = useState(null);
+
+  // Applying or changing a concession changes what's owed — keep the
+  // amount field tracking that automatically, right up until the office
+  // starts typing their own figure into it.
+  const prevDueNow = useRef(dueNow);
+  if (prevDueNow.current !== dueNow) {
+    prevDueNow.current = dueNow;
+    if (!amountTouched) {
+      // Deferred so this reads as "sync on the next render", not a set
+      // during render itself.
+      queueMicrotask(() => setAmount(dueNow ? String(dueNow) : ""));
+    }
+  }
+
+  function setConcession(changes) {
+    save({
+      ...state,
+      students: state.students.map((s) =>
+        s.id === liveStudent.id ? { ...s, concession: { ...c, ...changes } } : s),
+    });
+  }
 
   function record() {
     setError("");
@@ -1632,10 +1710,10 @@ export function PaymentModal({ state, save, student, onClose }) {
 
     const payment = {
       id: uid(),
-      studentId: student.id,
-      admissionNo: student.admissionNo,
-      studentName: student.name,
-      classAtPayment: `${student.className}-${student.section}`,
+      studentId: liveStudent.id,
+      admissionNo: liveStudent.admissionNo,
+      studentName: liveStudent.name,
+      classAtPayment: classLabel,
       year: state.year,
       receiptNo: nextReceiptNo(state),
       amount: amt,
@@ -1657,6 +1735,7 @@ export function PaymentModal({ state, save, student, onClose }) {
     downloadReceipt({ school: state.school, payment, duplicate: false });
     setJustRecorded(payment);
     setAmount("");
+    setAmountTouched(false);
     setReference("");
   }
 
@@ -1667,14 +1746,51 @@ export function PaymentModal({ state, save, student, onClose }) {
         onClick={(e) => e.stopPropagation()}>
         <div className="px-6 py-5 border-b border-slate-100 flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-lg font-extrabold">{student.name}</h2>
+            <h2 className="text-lg font-extrabold">{liveStudent.name}</h2>
             <p className="text-sm text-slate-500">
-              {student.admissionNo} · {student.className}{student.section ? `-${student.section}` : " · section not yet assigned"}
+              {liveStudent.admissionNo} · {classLabel}
+              {!liveStudent.section && " · section not yet assigned"}
             </p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 shrink-0">
             <X size={20} />
           </button>
+        </div>
+
+        <div className="px-6 py-5 border-b border-slate-100">
+          <div className="flex items-center justify-between mb-2">
+            <label className={eyebrow}>Concession</label>
+            {fee.concession > 0 && (
+              <span className="text-xs font-bold text-amber-600">−{inr(fee.concession)} applied</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setConcession({ type: c.type === "percent" ? "amount" : "percent" })}
+              className="w-10 h-10 shrink-0 rounded-lg border-2 border-slate-200 text-slate-600 text-sm font-bold hover:border-brand-500 hover:text-brand-600"
+              title="Switch between a percentage and a flat amount">
+              {c.type === "amount" ? "₹" : "%"}
+            </button>
+            <input inputMode="numeric" value={c.value || ""} placeholder="0"
+              className="w-24 border-2 border-slate-200 rounded-lg px-3 py-2.5 text-sm font-bold text-right tabular-nums outline-none focus:border-brand-500"
+              onChange={(e) => {
+                let v = Math.max(0, +e.target.value || 0);
+                if (c.type !== "amount") v = Math.min(100, v);
+                setConcession({ value: v });
+              }} />
+            <select className={`${cellInput} border-2 border-slate-200 rounded-lg flex-1 py-2.5`}
+              value={c.reason || ""} disabled={!(c.value > 0)}
+              onChange={(e) => setConcession({ reason: e.target.value })}>
+              <option value="">Reason (optional)</option>
+              {CONCESSION_REASONS.map((r) => <option key={r}>{r}</option>)}
+            </select>
+          </div>
+          {c.value > 0 && fee.transport > 0 && (
+            <label className="flex items-center gap-1.5 mt-2 text-xs font-semibold text-slate-500">
+              <input type="checkbox" checked={!!c.includeTransport}
+                onChange={(e) => setConcession({ includeTransport: e.target.checked })} />
+              Also discount transport
+            </label>
+          )}
         </div>
 
         <div className="px-6 py-5 grid grid-cols-3 gap-4 border-b border-slate-100 text-sm">
@@ -1705,14 +1821,15 @@ export function PaymentModal({ state, save, student, onClose }) {
         {dueNow > 0 ? (
           <div className="px-6 py-5">
             <label className={eyebrow}>Amount received</label>
-            <input inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value)}
+            <input inputMode="numeric" value={amount}
+              onChange={(e) => { setAmount(e.target.value); setAmountTouched(true); }}
               className="w-full mt-2 border-2 border-slate-200 focus:border-brand-500 rounded-xl px-3.5 py-3 text-xl font-extrabold tabular-nums outline-none" />
             <div className="flex gap-2 mt-2">
-              <button onClick={() => setAmount(String(dueNow))}
+              <button onClick={() => { setAmount(String(dueNow)); setAmountTouched(false); }}
                 className="text-xs font-bold rounded-lg px-3 py-1.5 border border-slate-200 text-slate-500 hover:border-brand-300">
                 Full balance ₹{inr(dueNow)}
               </button>
-              <button onClick={() => setAmount("")}
+              <button onClick={() => { setAmount(""); setAmountTouched(true); }}
                 className="text-xs font-bold rounded-lg px-3 py-1.5 border border-slate-200 text-slate-500 hover:border-brand-300">
                 Clear
               </button>
