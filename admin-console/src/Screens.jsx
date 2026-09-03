@@ -19,6 +19,7 @@ import {
   Users,
 } from "lucide-react";
 import {
+  ACADEMIC_YEARS,
   CLASSES,
   CONCESSION_REASONS,
   IMPORT_FIELDS,
@@ -142,7 +143,7 @@ export function SchoolScreen({ state, save }) {
           <label className={eyebrow}>Academic year</label>
           <select className={`${field} mt-2`} value={state.year}
             onChange={(e) => save({ ...state, year: e.target.value })}>
-            {["2025-26", "2026-27", "2027-28"].map((y) => <option key={y}>{y}</option>)}
+            {ACADEMIC_YEARS.map((y) => <option key={y}>{y}</option>)}
           </select>
         </div>
         <div className="sm:col-span-2">
@@ -652,8 +653,9 @@ function PromoteTab({ state, save }) {
         <p className="font-bold text-slate-700">No previous year to promote from</p>
         <p className="text-sm text-slate-500 mt-1 max-w-md mx-auto">
           Promotion needs a prior year's roll already in the system. Switch the
-          Academic Year in the sidebar to last year and import that roll under
-          Student Records, or use New Admission for students joining now.
+          Academic Year at the top of the page to last year and import that
+          roll under Student Records, or use New Admission for students
+          joining now.
         </p>
       </div>
     );

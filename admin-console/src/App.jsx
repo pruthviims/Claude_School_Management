@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import {
   Bus,
-  Calendar,
   LogOut,
   Percent,
   ReceiptIndianRupee,
@@ -15,11 +14,12 @@ import {
   AdmissionScreen,
   ConcessionScreen,
   FeeScreen,
+  FilterSelect,
   ImportScreen,
   SchoolScreen,
   TransportScreen,
 } from "./Screens";
-import { CLASSES, TRANSPORT_ID } from "./lib";
+import { ACADEMIC_YEARS, CLASSES, TRANSPORT_ID } from "./lib";
 
 const KEY = "school-fee-admin-v3";
 
@@ -86,6 +86,11 @@ const NAV = [
   { id: "import", label: "Student Records", Icon: Users },
   { id: "concessions", label: "Fees & Concessions", Icon: Percent },
 ];
+
+// Screens where the working Academic Year actually matters. School Profile
+// manages the year as school metadata via its own field, so it's excluded
+// here to avoid showing two year controls on the same page.
+const YEAR_SCOPED_STEPS = new Set(["transport", "fees", "admissions", "import", "concessions"]);
 
 const FEES_SUBTABS = [
   { id: "transport", label: "Bus Routes", Icon: Bus },
@@ -157,16 +162,6 @@ export default function App() {
           <p className="eyebrow text-brand-600 mt-1.5">Fee Portal</p>
         </div>
 
-        <div className="px-5 pt-5 pb-3">
-          <p className="eyebrow text-slate-400 flex items-center gap-1.5 mb-2.5">
-            <Calendar size={12} /> Academic Year
-          </p>
-          <select value={state.year} onChange={(e) => setState({ ...state, year: e.target.value })}
-            className="w-full bg-brand-50 text-brand-700 font-bold text-sm rounded-xl px-3 py-2.5 border border-brand-100 outline-none">
-            {["2025-26", "2026-27", "2027-28"].map((y) => <option key={y}>{y}</option>)}
-          </select>
-        </div>
-
         <nav className="flex lg:flex-col overflow-x-auto px-3 pb-3 gap-1.5">
           {NAV.map((n) => {
             // A grouped item is "on" if the current step is any of its
@@ -201,10 +196,20 @@ export default function App() {
       {/* ---------------- main ---------------- */}
       <main className="flex-1 min-w-0 px-6 lg:px-10 py-7">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-8">
-          <div className="bg-white rounded-full pl-4 pr-5 py-2.5 border border-slate-100 shadow-[0_1px_3px_rgba(15,23,41,0.04)] flex items-center gap-2.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            <span className="eyebrow text-slate-400">School Environment:</span>
-            <span className="eyebrow text-brand-600">{state.school.name}</span>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="bg-white rounded-full pl-4 pr-5 py-2.5 border border-slate-100 shadow-[0_1px_3px_rgba(15,23,41,0.04)] flex items-center gap-2.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              <span className="eyebrow text-slate-400">School Environment:</span>
+              <span className="eyebrow text-brand-600">{state.school.name}</span>
+            </div>
+
+            {YEAR_SCOPED_STEPS.has(step) && (
+              <FilterSelect value={state.year} active
+                onChange={(e) => setState({ ...state, year: e.target.value })}
+                className="w-auto min-w-[110px]">
+                {ACADEMIC_YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
+              </FilterSelect>
+            )}
           </div>
 
           <div className="flex items-center gap-3">

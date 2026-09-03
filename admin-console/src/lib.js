@@ -21,6 +21,8 @@ export const CLASSES = [
 
 export const TERMS = [1, 2, 3];
 
+export const ACADEMIC_YEARS = ["2025-26", "2026-27", "2027-28"];
+
 // X -> 1st PU is never automatic: many students leave for another board or
 // college after X, so promotion into these classes needs an explicit,
 // per-student decision rather than a bulk "promote everyone" action.
