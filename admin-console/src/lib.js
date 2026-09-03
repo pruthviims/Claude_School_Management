@@ -54,6 +54,29 @@ export function inYear(student, year) {
   return (student.year || year) === year;
 }
 
+// Admission number pattern: {academic year}/{class}/{seq}, seq starting at
+// 001 and counting per class per year — never global — so VIII's third
+// admission this year is .../VIII/003 regardless of how many other classes
+// have been admitted into. Defensive against collisions (e.g. a bulk
+// import that already used numbers matching this pattern) by skipping any
+// candidate already in use rather than assuming the count is gapless.
+export function nextAdmissionNo(state, className) {
+  if (!className) return "";
+  const prefix = `${state.year}/${className}/`;
+  const used = new Set(
+    state.students
+      .filter((s) => s.year === state.year && s.className === className)
+      .map((s) => s.admissionNo),
+  );
+  let seq = used.size + 1;
+  let candidate = `${prefix}${String(seq).padStart(3, "0")}`;
+  while (used.has(candidate)) {
+    seq += 1;
+    candidate = `${prefix}${String(seq).padStart(3, "0")}`;
+  }
+  return candidate;
+}
+
 /* ---------------- payments ---------------- */
 
 export const PAYMENT_MODES = [

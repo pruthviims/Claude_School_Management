@@ -40,6 +40,7 @@ import {
   inr,
   isTerminalClass,
   needsOptIn,
+  nextAdmissionNo,
   nextClassName,
   nextReceiptNo,
   oneTimeTotal,
@@ -585,7 +586,6 @@ function PromoteTab({ state, save, onPaid }) {
   const [sourceYearPick, setSourceYearPick] = useState("");
   const sourceYear = sourceYearPick || years[0] || "";
   const [query, setQuery] = useState("");
-  const [sections, setSections] = useState({});
   const [justPromoted, setJustPromoted] = useState(null);
 
   // "To" is the same working year used everywhere else in the app. Changing
@@ -628,7 +628,10 @@ function PromoteTab({ state, save, onPaid }) {
       admissionNo: s.admissionNo,
       name: s.name,
       className: target,
-      section: sections[s.admissionNo] || s.section,
+      // Carried forward silently — section reshuffling, if the school
+      // does it, happens later as its own step, not at the point of
+      // promotion, so there's nothing to ask for here.
+      section: s.section,
       rollNo: "",
       dob: s.dob,
       guardianName: s.guardianName,
@@ -732,7 +735,6 @@ function PromoteTab({ state, save, onPaid }) {
                     <tr>
                       <th className={th}>Student</th>
                       <th className={th}>Moving</th>
-                      <th className={th}>New section</th>
                       <th className={th} />
                     </tr>
                   </thead>
@@ -744,14 +746,16 @@ function PromoteTab({ state, save, onPaid }) {
                           <div className="text-xs text-slate-400 tabular-nums">{s.admissionNo}</div>
                         </td>
                         <td className="px-4 py-2.5 whitespace-nowrap">
-                          <span className="font-semibold text-slate-500">{s.className}-{s.section}</span>
+                          <span className="font-semibold text-slate-500">
+                            {s.className}{s.section ? `-${s.section}` : ""}
+                          </span>
                           <ArrowRight size={13} className="inline mx-1.5 text-slate-300" />
-                          <span className="font-bold">{target}</span>
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <input value={sections[s.admissionNo] ?? s.section}
-                            onChange={(e) => setSections({ ...sections, [s.admissionNo]: e.target.value })}
-                            className="w-20 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-center outline-none focus:border-brand-500" />
+                          <span className="font-bold">{target}{s.section ? `-${s.section}` : ""}</span>
+                          {!s.section && (
+                            <span className="ml-2 text-[11px] font-semibold text-slate-400">
+                              (section not yet assigned)
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-2.5 text-right">
                           <button onClick={() => promoteOne(s, target)}
@@ -767,10 +771,11 @@ function PromoteTab({ state, save, onPaid }) {
                 </table>
               </div>
               <p className="px-6 py-3 text-xs text-slate-500 border-t border-slate-100 max-w-2xl">
-                Each student is promoted one at a time as they're found — moving
-                into 1st PU is worded as its own confirmation rather than a plain
-                "Promote", since many students leave for another board or college
-                after X.
+                Section carries forward automatically — reassign it later from
+                Student Records if the school reshuffles sections. Each student
+                is promoted one at a time as they're found; moving into 1st PU
+                is worded as its own confirmation rather than a plain "Promote",
+                since many students leave for another board or college after X.
               </p>
             </div>
           )}
@@ -815,7 +820,7 @@ function PromoteTab({ state, save, onPaid }) {
 }
 
 function NewAdmissionTab({ state, save, onPaid }) {
-  const blank = { admissionNo: "", name: "", className: "", section: "A", dob: "",
+  const blank = { name: "", className: "", dob: "",
     guardianName: "", phone: "", email: "", stopId: "" };
   const [f, setF] = useState(blank);
   const [error, setError] = useState("");
@@ -823,24 +828,24 @@ function NewAdmissionTab({ state, save, onPaid }) {
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const stops = allStops(state.routes);
 
-  const currentYearAdmissionNos = new Set(
-    state.students.filter((s) => inYear(s, state.year)).map((s) => s.admissionNo),
-  );
+  // Recomputed live as the class changes, so staff sees the number that
+  // will actually be assigned before they submit — nothing to type, and
+  // nothing that can collide with what another admission just used.
+  const previewAdmissionNo = nextAdmissionNo(state, f.className);
 
   function submit(e) {
     e.preventDefault();
     setError(""); setDone(null);
-    const admissionNo = f.admissionNo.trim();
     const name = f.name.trim();
-    if (!admissionNo) return setError("Enter an admission number.");
-    if (currentYearAdmissionNos.has(admissionNo))
-      return setError(`Admission number ${admissionNo} is already used in ${state.year}.`);
-    if (!name || name.length < 2) return setError("Enter the student's full name.");
     if (!f.className) return setError("Choose a class.");
+    if (!name || name.length < 2) return setError("Enter the student's full name.");
 
     const student = {
-      id: uid(), admissionNo, name,
-      className: f.className, section: (f.section || "A").toUpperCase().slice(0, 10),
+      id: uid(), admissionNo: nextAdmissionNo(state, f.className), name,
+      className: f.className,
+      // Not known at admission time — assigned later as its own step,
+      // once class rosters are settled.
+      section: "",
       rollNo: "", dob: f.dob || null,
       guardianName: f.guardianName.trim(), phone: f.phone.trim(), email: f.email.trim(),
       stopId: f.stopId || null,
@@ -849,9 +854,9 @@ function NewAdmissionTab({ state, save, onPaid }) {
     };
     save({ ...state, students: [...state.students, student] });
     setDone(student);
-    // Class and section are sticky for rapid back-to-back entry from the
-    // same admission form; everything specific to one child is cleared.
-    setF({ ...blank, className: f.className, section: f.section });
+    // Class is sticky for rapid back-to-back entry from the same
+    // admission form; everything specific to one child is cleared.
+    setF({ ...blank, className: f.className });
     // Straight into payment collection — the parent is standing right
     // there, no reason to make staff go find this student again.
     if (onPaid) onPaid(student);
@@ -877,6 +882,8 @@ function NewAdmissionTab({ state, save, onPaid }) {
         <p className="text-sm text-slate-500 mb-5">
           For a student joining the school for the first time. The admission
           fee applies automatically, since it's charged only on first entry.
+          Section isn't asked here — assign it later from Student Records
+          once class rosters are settled.
         </p>
 
         {error && (
@@ -886,21 +893,11 @@ function NewAdmissionTab({ state, save, onPaid }) {
         )}
         {done && (
           <div className="mb-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl px-4 py-3 text-sm font-semibold">
-            Added {done.name} to {done.className}-{done.section}.
+            Added {done.name} — admission no. {done.admissionNo}.
           </div>
         )}
 
         <form onSubmit={submit} className="grid sm:grid-cols-2 gap-4">
-          <div>
-            <label className={eyebrow}>Admission no.<span className="text-red-500"> *</span></label>
-            <input className={`${field} mt-2`} value={f.admissionNo} onChange={set("admissionNo")}
-              placeholder="2026/0042" />
-          </div>
-          <div>
-            <label className={eyebrow}>Full name<span className="text-red-500"> *</span></label>
-            <input className={`${field} mt-2`} value={f.name} onChange={set("name")}
-              placeholder="Ananya Krishnamurthy" />
-          </div>
           <div>
             <label className={eyebrow}>Class<span className="text-red-500"> *</span></label>
             <FilterSelect value={f.className} active={Boolean(f.className)} className="mt-2"
@@ -910,8 +907,17 @@ function NewAdmissionTab({ state, save, onPaid }) {
             </FilterSelect>
           </div>
           <div>
-            <label className={eyebrow}>Section</label>
-            <input className={`${field} mt-2`} value={f.section} onChange={set("section")} />
+            <label className={eyebrow}>Admission no.</label>
+            <div className={`mt-2 rounded-xl px-3.5 py-2.5 text-sm font-bold tabular-nums border-2 ${
+              f.className ? "bg-brand-50 border-brand-200 text-brand-700"
+                          : "bg-slate-50 border-slate-100 text-slate-300"}`}>
+              {f.className ? previewAdmissionNo : "Choose a class first"}
+            </div>
+          </div>
+          <div className="sm:col-span-2">
+            <label className={eyebrow}>Full name<span className="text-red-500"> *</span></label>
+            <input className={`${field} mt-2`} value={f.name} onChange={set("name")}
+              placeholder="Ananya Krishnamurthy" />
           </div>
           <div>
             <label className={eyebrow}>Date of birth</label>
@@ -959,7 +965,7 @@ function NewAdmissionTab({ state, save, onPaid }) {
               <li key={s.id} className="px-5 py-3">
                 <p className="font-bold text-sm">{s.name}</p>
                 <p className="eyebrow text-slate-400 mt-0.5">
-                  {s.className}-{s.section} · {s.admissionNo}
+                  {s.className}{s.section ? `-${s.section}` : ""} · {s.admissionNo}
                 </p>
               </li>
             ))}
@@ -1161,9 +1167,18 @@ function ClassImport({ state, save, klass, setKlass }) {
 
           {existing.length > 0 && (
             <div className={`${panel} mt-6 overflow-hidden`}>
-              <div className="px-6 py-4 border-b border-slate-100">
+              <div className="px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
                 <h2 className="font-extrabold">{existing.length} already in {klass}</h2>
+                {existing.some((s) => !s.section) && (
+                  <span className="text-xs font-bold text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1">
+                    {existing.filter((s) => !s.section).length} need a section
+                  </span>
+                )}
               </div>
+              <p className="px-6 pt-3 text-xs text-slate-500 max-w-2xl">
+                Section isn't asked at admission time — assign or fix it here,
+                once class rosters are settled.
+              </p>
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead className="bg-slate-50/70">
@@ -1172,10 +1187,22 @@ function ClassImport({ state, save, klass, setKlass }) {
                   </thead>
                   <tbody>
                     {existing.slice(0, 25).map((s) => (
-                      <tr key={s.id} className="border-b border-slate-50 text-sm font-medium">
+                      <tr key={s.id}
+                        className={`border-b border-slate-50 text-sm font-medium ${!s.section ? "bg-amber-50/40" : ""}`}>
                         <td className="px-5 py-2.5 tabular-nums text-slate-500">{s.admissionNo}</td>
                         <td className="px-5 py-2.5 font-semibold">{s.name}</td>
-                        <td className="px-5 py-2.5">{s.section}</td>
+                        <td className="px-5 py-1.5">
+                          <input value={s.section} placeholder="Assign"
+                            onChange={(e) => save({
+                              ...state,
+                              students: state.students.map((row) =>
+                                row.id === s.id
+                                  ? { ...row, section: e.target.value.toUpperCase().slice(0, 10) }
+                                  : row),
+                            })}
+                            className={`w-20 border rounded-lg px-2.5 py-1.5 text-sm font-bold text-center outline-none focus:border-brand-500 ${
+                              s.section ? "border-slate-200" : "border-amber-300 placeholder:text-amber-400 placeholder:font-semibold"}`} />
+                        </td>
                         <td className="px-5 py-2.5">{s.guardianName || "—"}</td>
                         <td className="px-5 py-2.5 tabular-nums">{s.phone || "—"}</td>
                       </tr>
@@ -1479,7 +1506,12 @@ export function ConcessionScreen({ state, save }) {
                         </span>
                       </div>
                     </td>
-                    <td className="px-5 py-3 whitespace-nowrap font-semibold">{s.className}-{s.section}</td>
+                    <td className="px-5 py-3 whitespace-nowrap font-semibold">
+                      {s.className}
+                      {s.section
+                        ? `-${s.section}`
+                        : <span className="ml-1.5 text-[11px] font-bold text-amber-600 align-middle">no section</span>}
+                    </td>
                     <td className="px-5 py-3">
                       <select className={`${cellInput} border-slate-100`} value={s.stopId || ""}
                         onChange={(e) => patchStudent(s.id, { stopId: e.target.value || null })}>
@@ -1637,7 +1669,7 @@ export function PaymentModal({ state, save, student, onClose }) {
           <div>
             <h2 className="text-lg font-extrabold">{student.name}</h2>
             <p className="text-sm text-slate-500">
-              {student.admissionNo} · {student.className}-{student.section}
+              {student.admissionNo} · {student.className}{student.section ? `-${student.section}` : " · section not yet assigned"}
             </p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 shrink-0">
