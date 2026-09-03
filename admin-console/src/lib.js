@@ -141,9 +141,9 @@ export const CONCESSION_REASONS = [
 
 /* ---------------- money ---------------- */
 
-export function inr(rupees) {
-  const neg = rupees < 0;
-  const n = Math.round(Math.abs(rupees));
+// Indian digit grouping only, no sign and no currency symbol — shared by
+// inr() and inrPlain() below so the two never drift apart.
+function groupIndian(n) {
   let s = String(n);
   if (s.length > 3) {
     let head = s.slice(0, -3);
@@ -156,7 +156,25 @@ export function inr(rupees) {
     if (head) groups.unshift(head);
     s = groups.join(",") + "," + tail;
   }
-  return (neg ? "-₹" : "₹") + s;
+  return s;
+}
+
+export function inr(rupees) {
+  const neg = rupees < 0;
+  const n = Math.round(Math.abs(rupees));
+  return (neg ? "-₹" : "₹") + groupIndian(n);
+}
+
+// Same formatting, no ₹. jsPDF's built-in fonts (the standard 14 PDF fonts)
+// use WinAnsiEncoding, which doesn't include the Rupee sign — text run
+// through inr() renders as a garbled glyph in real PDF viewers (Chrome's
+// viewer shows it plainly; some tools silently drop it, which is why this
+// was easy to miss in testing). Anything written into a PDF must use this
+// instead, with "Rs." placed as ordinary text wherever a label is needed.
+export function inrPlain(rupees) {
+  const neg = rupees < 0;
+  const n = Math.round(Math.abs(rupees));
+  return (neg ? "-" : "") + groupIndian(n);
 }
 
 /* ---------------- transport ---------------- */

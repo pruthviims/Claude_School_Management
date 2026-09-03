@@ -11,7 +11,7 @@
 
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { amountInWords, displayDate, inr } from "./lib";
+import { amountInWords, displayDate, inrPlain } from "./lib";
 
 const PAGE_W = 559.37; // A5 landscape, points
 const PAGE_H = 419.53;
@@ -87,9 +87,9 @@ export function buildReceiptPdf({ school, payment, duplicate = false }) {
   });
 
   // Line items.
-  const rows = (payment.feeLines || []).map((l) => [l.name, inr(l.amount)]);
+  const rows = (payment.feeLines || []).map((l) => [l.name, inrPlain(l.amount)]);
   if (payment.concessionAtPayment > 0) {
-    rows.push(["Concession applied", `-${inr(payment.concessionAtPayment)}`]);
+    rows.push(["Concession applied", `-${inrPlain(payment.concessionAtPayment)}`]);
   }
 
   autoTable(doc, {
@@ -99,7 +99,7 @@ export function buildReceiptPdf({ school, payment, duplicate = false }) {
     tableLineWidth: 0,
     head: [["Particulars", "Amount (Rs.)"]],
     body: rows,
-    foot: [["Amount received", inr(payment.amount)]],
+    foot: [["Amount received", inrPlain(payment.amount)]],
     theme: "plain",
     styles: { fontSize: 9, cellPadding: { top: 3, bottom: 3, left: 2, right: 2 },
       lineWidth: 0 },
@@ -136,7 +136,7 @@ export function buildReceiptPdf({ school, payment, duplicate = false }) {
   y += 12;
   if (payment.balanceAfterAtPayment > 0) {
     doc.setTextColor(160, 60, 50);
-    doc.text(`Balance still due: Rs. ${inr(payment.balanceAfterAtPayment)}`, MARGIN, y);
+    doc.text(`Balance still due: Rs. ${inrPlain(payment.balanceAfterAtPayment)}`, MARGIN, y);
   } else {
     doc.setTextColor(30, 110, 80);
     doc.text("Fees settled in full for this academic year.", MARGIN, y);
