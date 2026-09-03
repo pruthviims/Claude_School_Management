@@ -9,6 +9,7 @@ import {
   Download,
   FileSpreadsheet,
   GraduationCap,
+  History,
   IndianRupee,
   Percent,
   Plus,
@@ -17,17 +18,21 @@ import {
   Upload,
   UserPlus,
   Users,
+  Wallet,
+  X,
 } from "lucide-react";
 import {
   ACADEMIC_YEARS,
   CLASSES,
   CONCESSION_REASONS,
   IMPORT_FIELDS,
+  PAYMENT_MODES,
   SAMPLE_MESSY_CSV,
   TEMPLATE_CSV,
   TERMS,
   TRANSPORT_ID,
   allStops,
+  amountInWords,
   computeFee,
   displayDate,
   fareRange,
@@ -36,13 +41,16 @@ import {
   isTerminalClass,
   needsOptIn,
   nextClassName,
+  nextReceiptNo,
   oneTimeTotal,
+  paidByStudent,
   parseCSV,
   recurringTotal,
   splitHeader,
   suggestColumnMap,
   validateRows,
 } from "./lib";
+import { downloadReceipt } from "./receipt";
 
 /* ---------------- shared bits ---------------- */
 
@@ -1306,6 +1314,7 @@ export function ConcessionScreen({ state, save }) {
   const [onlyWith, setOnlyWith] = useState(false);
   const [classFilter, setClassFilter] = useState("");
   const [sectionFilter, setSectionFilter] = useState("");
+  const [payingFor, setPayingFor] = useState(null);
   const stops = allStops(state.routes);
   const currentYearStudents = state.students.filter((s) => inYear(s, state.year));
 
@@ -1342,15 +1351,17 @@ export function ConcessionScreen({ state, save }) {
   // always describe what's actually listed below.
   const totals = shown.reduce((a, s) => {
     const f = computeFee(s, state);
+    const paid = paidByStudent(state, s);
     return { gross: a.gross + f.gross, concession: a.concession + f.concession,
-             net: a.net + f.net, count: a.count + (f.concession > 0 ? 1 : 0) };
-  }, { gross: 0, concession: 0, net: 0, count: 0 });
+             net: a.net + f.net, paid: a.paid + paid,
+             count: a.count + (f.concession > 0 ? 1 : 0) };
+  }, { gross: 0, concession: 0, net: 0, paid: 0, count: 0 });
 
   if (!currentYearStudents.length) {
     return (
       <div>
         <PageHead title="Fees & Concessions"
-          subtitle="Once students are imported, this is where each one's discount is set." />
+          subtitle="Once students are imported, this is where each one's discount is set and payments are collected." />
         <div className={`${panel} border-dashed p-12 text-center text-slate-400 font-semibold`}>
           No students in {state.year} yet. Add them under Admissions or Student Records.
         </div>
@@ -1361,9 +1372,9 @@ export function ConcessionScreen({ state, save }) {
   return (
     <div>
       <PageHead title="Fees & Concessions"
-        subtitle="Each fee is the class structure plus transport for the student's stop, less any concession. Zero is a perfectly normal value." />
+        subtitle="Each fee is the class structure plus transport for the student's stop, less any concession. Collect payments and print receipts from the same row." />
 
-      <div className="grid sm:grid-cols-4 gap-5 mb-6">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-5 mb-6">
         <StatCard icon={Users} tint="bg-brand-50 text-brand-600" label="Students"
           value={shown.length}
           note={shown.length === currentYearStudents.length ? `On the ${state.year} roll` : `Of ${currentYearStudents.length} in ${state.year}`} />
@@ -1371,8 +1382,10 @@ export function ConcessionScreen({ state, save }) {
           value={inr(totals.gross)} note="Before concessions" />
         <StatCard icon={Percent} tint="bg-amber-50 text-amber-600" label="Concessions"
           value={inr(totals.concession)} note={`${totals.count} students`} noteTint="text-amber-600" />
-        <StatCard icon={Check} tint="bg-emerald-50 text-emerald-600" label="Net payable"
-          value={inr(totals.net)} note="Billable this year" noteTint="text-emerald-600" />
+        <StatCard icon={Wallet} tint="bg-emerald-50 text-emerald-600" label="Collected"
+          value={inr(totals.paid)} note={`Of ${inr(totals.net)} net`} noteTint="text-emerald-600" />
+        <StatCard icon={Check} tint="bg-slate-100 text-slate-500" label="Outstanding"
+          value={inr(Math.max(0, totals.net - totals.paid))} note="Still to collect" />
       </div>
 
       <div className="flex flex-wrap gap-2.5 mb-5">
@@ -1423,7 +1436,7 @@ export function ConcessionScreen({ state, save }) {
           </p>
         ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1040px]">
+          <table className="w-full min-w-[1280px]">
             <thead className="bg-slate-50/70">
               <tr>
                 <th className={th}>Student info</th>
@@ -1435,12 +1448,20 @@ export function ConcessionScreen({ state, save }) {
                 <th className={th}>Reason</th>
                 <th className={`${th} text-right`}>Discount</th>
                 <th className={`${th} text-right`}>Net payable</th>
+                <th className={`${th} text-right`}>Paid</th>
+                <th className={`${th} text-right`}>Balance</th>
+                <th className={th} />
               </tr>
             </thead>
             <tbody>
               {shown.map((s) => {
                 const fee = computeFee(s, state);
                 const c = s.concession || {};
+                const paid = paidByStudent(state, s);
+                const balance = fee.net - paid;
+                const receiptCount = state.payments.filter(
+                  (p) => p.studentId === s.id && p.year === state.year,
+                ).length;
                 return (
                   <tr key={s.id} className="border-b border-slate-50 text-sm font-medium">
                     <td className="px-5 py-3">
@@ -1508,6 +1529,25 @@ export function ConcessionScreen({ state, save }) {
                         {inr(fee.net)}
                       </span>
                     </td>
+                    <td className="px-5 py-3 text-right tabular-nums text-slate-500">
+                      {paid ? inr(paid) : <span className="text-slate-300">—</span>}
+                    </td>
+                    <td className="px-5 py-3 text-right tabular-nums font-semibold">
+                      {balance > 0
+                        ? <span className="text-red-500">{inr(balance)}</span>
+                        : balance < 0
+                          ? <span className="text-amber-600">Credit {inr(-balance)}</span>
+                          : <span className="text-emerald-600">Paid up</span>}
+                    </td>
+                    <td className="px-5 py-3 text-right">
+                      <button onClick={() => setPayingFor(s)}
+                        className={balance > 0
+                          ? "text-xs font-bold rounded-lg px-3 py-2 bg-brand-600 text-white hover:bg-brand-700 whitespace-nowrap flex items-center gap-1.5 ml-auto"
+                          : "text-xs font-bold rounded-lg px-3 py-2 border border-slate-200 text-slate-500 hover:border-slate-300 whitespace-nowrap flex items-center gap-1.5 ml-auto"}>
+                        {balance > 0 ? <Wallet size={13} /> : <History size={13} />}
+                        {balance > 0 ? "Collect" : receiptCount ? `Receipts (${receiptCount})` : "—"}
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
@@ -1524,6 +1564,196 @@ export function ConcessionScreen({ state, save }) {
         A flat amount is capped at the fee, so a concession can take a bill to zero but
         never below it.
       </p>
+
+      {payingFor && (
+        <PaymentModal state={state} save={save} student={payingFor}
+          onClose={() => setPayingFor(null)} />
+      )}
+    </div>
+  );
+}
+
+function PaymentModal({ state, save, student, onClose }) {
+  const fee = computeFee(student, state);
+  const payments = state.payments
+    .filter((p) => p.studentId === student.id && p.year === state.year)
+    .sort((a, b) => b.receivedOn.localeCompare(a.receivedOn));
+  const paid = payments.reduce((a, p) => a + p.amount, 0);
+  const rawBalance = fee.net - paid;
+  const dueNow = Math.max(0, rawBalance);
+
+  const [amount, setAmount] = useState(dueNow ? String(dueNow) : "");
+  const [mode, setMode] = useState("cash");
+  const [reference, setReference] = useState("");
+  const [error, setError] = useState("");
+  const [justRecorded, setJustRecorded] = useState(null);
+
+  function record() {
+    setError("");
+    const amt = Math.round(parseFloat(amount) || 0);
+    if (!(amt > 0)) return setError("Enter an amount greater than zero.");
+    if (amt > rawBalance) return setError(`That's more than the balance of ₹${inr(rawBalance)}.`);
+
+    const payment = {
+      id: uid(),
+      studentId: student.id,
+      admissionNo: student.admissionNo,
+      studentName: student.name,
+      classAtPayment: `${student.className}-${student.section}`,
+      year: state.year,
+      receiptNo: nextReceiptNo(state),
+      amount: amt,
+      mode,
+      reference: reference.trim(),
+      receivedOn: new Date().toISOString().slice(0, 10),
+      collectedBy: state.school.adminName,
+      // Snapshot the breakdown as it stood at the moment of payment, so a
+      // reprint later — after the fee structure or concession has changed —
+      // still shows what was actually charged and collected that day.
+      feeLines: fee.lines,
+      grossAtPayment: fee.gross,
+      concessionAtPayment: fee.concession,
+      netAtPayment: fee.net,
+      balanceBeforeAtPayment: rawBalance,
+      balanceAfterAtPayment: rawBalance - amt,
+    };
+    save({ ...state, payments: [...state.payments, payment] });
+    downloadReceipt({ school: state.school, payment, duplicate: false });
+    setJustRecorded(payment);
+    setAmount("");
+    setReference("");
+  }
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center p-4 z-50"
+      onClick={onClose}>
+      <div className={`${panel} w-full max-w-lg max-h-[88vh] overflow-y-auto`}
+        onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-5 border-b border-slate-100 flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-extrabold">{student.name}</h2>
+            <p className="text-sm text-slate-500">
+              {student.admissionNo} · {student.className}-{student.section}
+            </p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 shrink-0">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="px-6 py-5 grid grid-cols-3 gap-4 border-b border-slate-100 text-sm">
+          <div>
+            <p className="eyebrow text-slate-400">Net payable</p>
+            <p className="text-lg font-extrabold tabular-nums mt-1">{inr(fee.net)}</p>
+          </div>
+          <div>
+            <p className="eyebrow text-slate-400">Paid so far</p>
+            <p className="text-lg font-extrabold tabular-nums mt-1 text-emerald-600">{inr(paid)}</p>
+          </div>
+          <div>
+            <p className="eyebrow text-slate-400">Balance</p>
+            <p className={`text-lg font-extrabold tabular-nums mt-1 ${
+              rawBalance > 0 ? "text-red-500" : rawBalance < 0 ? "text-amber-600" : "text-emerald-600"}`}>
+              {rawBalance > 0 ? inr(rawBalance) : rawBalance < 0 ? `Credit ${inr(-rawBalance)}` : "Paid up"}
+            </p>
+          </div>
+        </div>
+
+        {justRecorded && (
+          <div className="mx-6 mt-5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl px-4 py-3 text-sm font-semibold">
+            Recorded {justRecorded.receiptNo} for ₹{inr(justRecorded.amount)}. The receipt PDF
+            has started downloading.
+          </div>
+        )}
+
+        {dueNow > 0 ? (
+          <div className="px-6 py-5">
+            <label className={eyebrow}>Amount received</label>
+            <input inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value)}
+              className="w-full mt-2 border-2 border-slate-200 focus:border-brand-500 rounded-xl px-3.5 py-3 text-xl font-extrabold tabular-nums outline-none" />
+            <div className="flex gap-2 mt-2">
+              <button onClick={() => setAmount(String(dueNow))}
+                className="text-xs font-bold rounded-lg px-3 py-1.5 border border-slate-200 text-slate-500 hover:border-brand-300">
+                Full balance ₹{inr(dueNow)}
+              </button>
+              <button onClick={() => setAmount("")}
+                className="text-xs font-bold rounded-lg px-3 py-1.5 border border-slate-200 text-slate-500 hover:border-brand-300">
+                Clear
+              </button>
+            </div>
+
+            <label className={`${eyebrow} block mt-4`}>Payment mode</label>
+            <div className="grid grid-cols-3 gap-2 mt-2">
+              {PAYMENT_MODES.map((m) => (
+                <button key={m.id} onClick={() => setMode(m.id)}
+                  className={`text-sm font-bold rounded-xl px-3 py-2.5 border-2 transition ${
+                    mode === m.id ? "bg-brand-50 border-brand-400 text-brand-700"
+                                  : "bg-white border-slate-200 text-slate-600 hover:border-brand-300"}`}>
+                  {m.label}
+                </button>
+              ))}
+            </div>
+
+            <label className={`${eyebrow} block mt-4`}>
+              Reference <span className="normal-case text-slate-400">(UPI ID, cheque no., last 4 of card — optional)</span>
+            </label>
+            <input value={reference} onChange={(e) => setReference(e.target.value)}
+              className={`${field} mt-2`} />
+
+            {amount && Math.round(parseFloat(amount) || 0) > 0 && (
+              <p className="text-xs text-slate-400 italic mt-3">
+                {amountInWords(Math.round(parseFloat(amount) || 0))}
+              </p>
+            )}
+
+            {error && (
+              <div className="mt-3 flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm font-semibold">
+                <AlertTriangle size={15} className="mt-0.5 shrink-0" /> {error}
+              </div>
+            )}
+
+            <button onClick={record} className={`${primary} w-full justify-center mt-4`}>
+              <Wallet size={16} /> Record payment & download receipt
+            </button>
+          </div>
+        ) : (
+          <div className="px-6 py-5">
+            <div className={`${rawBalance < 0 ? "bg-amber-50 border-amber-200 text-amber-800" : "bg-emerald-50 border-emerald-200 text-emerald-800"} border rounded-xl px-4 py-3 text-sm font-semibold`}>
+              {rawBalance < 0
+                ? `This student has a credit of ₹${inr(-rawBalance)} — nothing left to collect this year.`
+                : "Fees settled in full for this academic year."}
+            </div>
+          </div>
+        )}
+
+        {payments.length > 0 && (
+          <div className="px-6 py-5 border-t border-slate-100">
+            <h3 className="eyebrow text-slate-400 flex items-center gap-1.5 mb-3">
+              <History size={13} /> Payment history
+            </h3>
+            <ul className="divide-y divide-slate-50">
+              {payments.map((p) => (
+                <li key={p.id} className="py-2.5 flex items-center justify-between gap-3 text-sm">
+                  <div>
+                    <p className="font-bold">{inr(p.amount)}
+                      <span className="font-normal text-slate-400"> · {p.mode === "cash" ? "Cash" :
+                        p.mode === "upi" ? "UPI" : p.mode === "card" ? "Card" :
+                        p.mode === "netbanking" ? "Net banking" : "Cheque"}</span>
+                    </p>
+                    <p className="eyebrow text-slate-400 mt-0.5">
+                      {p.receiptNo} · {displayDate(p.receivedOn)}
+                    </p>
+                  </div>
+                  <button onClick={() => downloadReceipt({ school: state.school, payment: p, duplicate: true })}
+                    className="text-xs font-bold rounded-lg px-3 py-1.5 border border-slate-200 text-slate-500 hover:border-brand-300 flex items-center gap-1.5 shrink-0">
+                    <Download size={13} /> PDF
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

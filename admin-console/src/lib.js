@@ -54,6 +54,76 @@ export function inYear(student, year) {
   return (student.year || year) === year;
 }
 
+/* ---------------- payments ---------------- */
+
+export const PAYMENT_MODES = [
+  { id: "cash", label: "Cash" },
+  { id: "upi", label: "UPI" },
+  { id: "card", label: "Card" },
+  { id: "netbanking", label: "Net banking" },
+  { id: "cheque", label: "Cheque" },
+];
+
+// Gapless within a year is what a real ledger needs (a Postgres row lock in
+// the Django backend); a browser prototype with one user at a time can get
+// away with counting existing receipts. Noted as a known simplification —
+// see backend/fees/models.py DocumentCounter for the real version.
+export function nextReceiptNo(state) {
+  const n = state.payments.filter((p) => p.year === state.year).length + 1;
+  return `RCP/${state.year}/${String(n).padStart(5, "0")}`;
+}
+
+export function paidByStudent(state, student) {
+  return state.payments
+    .filter((p) => p.studentId === student.id && p.year === state.year)
+    .reduce((a, p) => a + p.amount, 0);
+}
+
+const WORD_ONES = ["", "one", "two", "three", "four", "five", "six", "seven", "eight",
+  "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+  "sixteen", "seventeen", "eighteen", "nineteen"];
+const WORD_TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy",
+  "eighty", "ninety"];
+
+function wordsUnderHundred(n) {
+  if (n < 20) return WORD_ONES[n];
+  const t = Math.floor(n / 10);
+  const o = n % 10;
+  return WORD_TENS[t] + (o ? `-${WORD_ONES[o]}` : "");
+}
+
+function wordsUnderThousand(n) {
+  const h = Math.floor(n / 100);
+  const rest = n % 100;
+  const parts = [];
+  if (h) parts.push(`${WORD_ONES[h]} hundred`);
+  if (rest) parts.push(wordsUnderHundred(rest));
+  return parts.join(" ");
+}
+
+// Indian numbering (lakh, crore) — not "million". A school accountant will
+// reject a receipt that says "one million" for ₹10,00,000.
+export function amountInWords(rupees) {
+  const n = Math.round(Math.abs(rupees));
+  if (n === 0) return "Zero rupees only";
+
+  const crore = Math.floor(n / 10000000);
+  let rest = n % 10000000;
+  const lakh = Math.floor(rest / 100000);
+  rest %= 100000;
+  const thousand = Math.floor(rest / 1000);
+  rest %= 1000;
+
+  const chunks = [];
+  if (crore) chunks.push(`${wordsUnderThousand(crore)} crore`);
+  if (lakh) chunks.push(`${wordsUnderThousand(lakh)} lakh`);
+  if (thousand) chunks.push(`${wordsUnderThousand(thousand)} thousand`);
+  if (rest) chunks.push(wordsUnderThousand(rest));
+
+  const out = `${chunks.join(" ")} rupees only`;
+  return out.charAt(0).toUpperCase() + out.slice(1);
+}
+
 // The transport row in a fee structure carries no amount of its own — the
 // figure comes from whichever stop the student boards at. Marked by this id
 // so the editor can render it differently and the calculator can resolve it.

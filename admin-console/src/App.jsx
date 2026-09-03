@@ -53,7 +53,7 @@ function defaultComponents(stage) {
 function freshWorkspace(school) {
   const structure = {};
   for (const c of CLASSES) structure[c.name] = defaultComponents(c.stage);
-  return { school, year: "2026-27", structure, routes: [], students: [] };
+  return { school, year: "2026-27", structure, routes: [], students: [], payments: [] };
 }
 
 function load() {
@@ -67,6 +67,8 @@ function load() {
     if (parsed?.students?.some((s) => !s.year)) {
       parsed.students = parsed.students.map((s) => ({ ...s, year: s.year || parsed.year }));
     }
+    // Payments didn't exist before receipt collection was added.
+    if (!Array.isArray(parsed.payments)) parsed.payments = [];
     return parsed;
   } catch {
     /* unreadable storage falls through to a fresh start */
