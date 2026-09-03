@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ heading }} {{ doc_no }}</title>
+<style>
+  @page { size: A5 landscape; margin: 10mm; }
+  body { font-family: "DejaVu Sans", sans-serif; font-size: 9pt; color: #111; margin: 0; }
+  .sheet { border: 1px solid #333; padding: 6mm; position: relative; }
+  .watermark {
+    position: absolute; top: 40%; left: 50%;
+    transform: translate(-50%, -50%) rotate(-20deg);
+    font-size: 40pt; color: rgba(0,0,0,0.08); font-weight: bold;
+    letter-spacing: 4px;
+  }
+  header { display: flex; justify-content: space-between; align-items: flex-start;
+           border-bottom: 1.5px solid #333; padding-bottom: 3mm; }
+  .school-name { font-size: 14pt; font-weight: bold; margin: 0; }
+  .school-address { font-size: 7.5pt; color: #444; margin: 1mm 0 0; }
+  .doc-type { text-align: right; }
+  .doc-type h2 { font-size: 11pt; margin: 0; text-transform: uppercase; letter-spacing: 1px; }
+  .doc-meta { font-size: 8pt; margin-top: 1mm; }
+  .student-grid { display: flex; gap: 8mm; margin: 4mm 0 3mm; font-size: 8.5pt; }
+  .student-grid dt { color: #555; font-size: 7.5pt; text-transform: uppercase; }
+  .student-grid dd { margin: 0; font-weight: bold; }
+  table { width: 100%; border-collapse: collapse; margin-top: 2mm; }
+  th { text-align: left; font-size: 7.5pt; text-transform: uppercase; color: #555;
+       border-bottom: 1px solid #999; padding: 1.5mm 1mm; }
+  td { padding: 1.5mm 1mm; border-bottom: 0.5px solid #ddd; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .total-row td { border-top: 1.5px solid #333; border-bottom: none;
+                  font-weight: bold; font-size: 10pt; padding-top: 2mm; }
+  .words { margin-top: 2mm; font-size: 8pt; font-style: italic; color: #333; }
+  footer { margin-top: 6mm; display: flex; justify-content: space-between;
+           align-items: flex-end; font-size: 7pt; color: #555; }
+  .sign { text-align: right; }
+  .sign-line { border-top: 0.5px solid #333; padding-top: 1mm; width: 40mm;
+               margin-left: auto; }
+</style>
+</head>
+<body>
+<div class="sheet">
+  {% if is_duplicate %}<div class="watermark">DUPLICATE</div>{% endif %}
+
+  <header>
+    <div>
+      <p class="school-name">{{ school.name }}</p>
+      <p class="school-address">{{ school.address|linebreaksbr }}</p>
+    </div>
+    <div class="doc-type">
+      <h2>{{ heading }}</h2>
+      <div class="doc-meta">
+        No. <strong>{{ doc_no }}</strong><br>
+        Date: {{ doc_date|date:"d M Y" }}
+      </div>
+    </div>
+  </header>
+
+  <div class="student-grid">
+    <dl><dt>Student</dt><dd>{{ student.full_name }}</dd></dl>
+    <dl><dt>Admission no.</dt><dd>{{ student.admission_no }}</dd></dl>
+    <dl><dt>Class</dt><dd>{{ enrollment.section }}</dd></dl>
+    <dl><dt>Academic year</dt><dd>{{ enrollment.academic_year.name }}</dd></dl>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:6%">#</th>
+        <th>Particulars</th>
+        <th style="width:12%">Term</th>
+        <th class="num" style="width:22%">Amount ({{ currency }})</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for line in lines %}
+      <tr>
+        <td>{{ forloop.counter }}</td>
+        <td>{{ line.name }}</td>
+        <td>{{ line.term|default:"—" }}</td>
+        <td class="num">{{ line.amount_display }}</td>
+      </tr>
+      {% endfor %}
+      <tr class="total-row">
+        <td colspan="3">Total</td>
+        <td class="num">{{ currency }} {{ total_display }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p class="words">{{ total_words }}</p>
+
+  {% if payment %}
+  <p style="font-size:8pt; margin-top:2mm;">
+    Received by {{ payment.get_mode_display }}{% if payment.instrument_ref %}
+    — ref. {{ payment.instrument_ref }}{% endif %}.
+    Status: {{ payment.get_clearing_status_display }}.
+    {% if payment.convenience_fee %}
+    A convenience fee of {{ currency }}{{ payment.convenience_fee|floatformat:0 }}
+    paise was charged by the payment gateway and is not part of school fees.
+    {% endif %}
+  </p>
+  {% endif %}
+
+  <footer>
+    <div style="max-width:60%">{{ school.receipt_footer }}</div>
+    <div class="sign"><div class="sign-line">Authorised signatory</div></div>
+  </footer>
+</div>
+</body>
+</html>

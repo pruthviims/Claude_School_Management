@@ -1,0 +1,31 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+
+  /* Violet from the payroll portal's primary button and active nav item. */
+  --color-brand-50: #f2efff;
+  --color-brand-100: #e5dfff;
+  --color-brand-200: #cec2ff;
+  --color-brand-500: #6d4dff;
+  --color-brand-600: #5b3df5;
+  --color-brand-700: #4a2ee0;
+
+  --color-canvas: #f5f6fa;
+  --color-ink: #0f1729;
+}
+
+body {
+  background: var(--color-canvas);
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Tiny all-caps labels used throughout the portal. */
+@utility eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
