@@ -576,11 +576,17 @@ function PromoteTab({ state, save }) {
   );
   const [sourceYearPick, setSourceYearPick] = useState("");
   const sourceYear = sourceYearPick || years[0] || "";
-
-  const [selected, setSelected] = useState(() => new Set());
+  const [query, setQuery] = useState("");
   const [sections, setSections] = useState({});
-  const [confirmed, setConfirmed] = useState(() => new Set());
-  const [done, setDone] = useState(null);
+  const [justPromoted, setJustPromoted] = useState(null);
+
+  // "To" is the same working year used everywhere else in the app. Changing
+  // it here writes straight back to it, so the From/To pair never drifts
+  // out of sync with a second selector somewhere else on the page.
+  function changeToYear(next) {
+    save({ ...state, year: next });
+    if (sourceYearPick === next) setSourceYearPick("");
+  }
 
   const currentYearAdmissionNos = useMemo(
     () => new Set(state.students.filter((s) => inYear(s, state.year)).map((s) => s.admissionNo)),
@@ -594,35 +600,22 @@ function PromoteTab({ state, save }) {
 
   const pending = candidates.filter((s) => !currentYearAdmissionNos.has(s.admissionNo));
   const alreadyPromoted = candidates.length - pending.length;
-  const graduating = pending.filter((s) => isTerminalClass(s.className));
-  const promotable = pending.filter((s) => !isTerminalClass(s.className)).map((s) => ({
+  const graduatingAll = pending.filter((s) => isTerminalClass(s.className));
+  const promotableAll = pending.filter((s) => !isTerminalClass(s.className)).map((s) => ({
     student: s,
     target: nextClassName(s.className),
     decisionNeeded: needsOptIn(nextClassName(s.className)),
   }));
 
-  function toggle(admissionNo) {
-    const next = new Set(selected);
-    if (next.has(admissionNo)) next.delete(admissionNo); else next.add(admissionNo);
-    setSelected(next);
-  }
+  // A parent is standing at the counter for one child, not a batch — search
+  // narrows straight to that student rather than scrolling a whole roll.
+  const q = query.trim().toLowerCase();
+  const matches = (s) => !q || s.name.toLowerCase().includes(q) || s.admissionNo.toLowerCase().includes(q);
+  const promotable = promotableAll.filter((p) => matches(p.student));
+  const graduating = graduatingAll.filter(matches);
 
-  function toggleSelectAllReady() {
-    const ready = promotable.filter((p) => !p.decisionNeeded).map((p) => p.student.admissionNo);
-    const allSelected = ready.every((a) => selected.has(a));
-    const next = new Set(selected);
-    ready.forEach((a) => (allSelected ? next.delete(a) : next.add(a)));
-    setSelected(next);
-  }
-
-  function confirmOptIn(admissionNo) {
-    setConfirmed(new Set(confirmed).add(admissionNo));
-    toggle(admissionNo);
-  }
-
-  function commit() {
-    const chosen = promotable.filter((p) => selected.has(p.student.admissionNo));
-    const added = chosen.map(({ student: s, target }) => ({
+  function promoteOne(s, target) {
+    const record = {
       id: uid(),
       admissionNo: s.admissionNo,
       name: s.name,
@@ -639,11 +632,9 @@ function PromoteTab({ state, save }) {
       // A new academic year is a fresh decision, not a silent carry-forward
       // of last year's waiver.
       concession: { type: "percent", value: 0, reason: "", includeTransport: false },
-    }));
-    save({ ...state, students: [...state.students, ...added] });
-    setDone({ created: added.length });
-    setSelected(new Set());
-    setConfirmed(new Set());
+    };
+    save({ ...state, students: [...state.students, record] });
+    setJustPromoted({ name: s.name, target });
   }
 
   if (!years.length) {
@@ -652,41 +643,47 @@ function PromoteTab({ state, save }) {
         <Sparkles className="mx-auto text-slate-300 mb-3" size={26} />
         <p className="font-bold text-slate-700">No previous year to promote from</p>
         <p className="text-sm text-slate-500 mt-1 max-w-md mx-auto">
-          Promotion needs a prior year's roll already in the system. Switch the
-          Academic Year at the top of the page to last year and import that
-          roll under Student Records, or use New Admission for students
-          joining now.
+          Promotion needs a prior year's roll already in the system. Set "To"
+          below to last year and import that roll under Student Records, or
+          use New Admission for students joining now.
         </p>
       </div>
     );
   }
 
-  const selectedReadyCount = promotable.filter((p) => selected.has(p.student.admissionNo)).length;
-
   return (
     <div>
-      {done && (
+      {justPromoted && (
         <div className="mb-5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl px-5 py-4 text-sm font-semibold">
-          Promoted {done.created} student{done.created === 1 ? "" : "s"} into {state.year}.
+          Promoted {justPromoted.name} to {justPromoted.target}. Take payment on the
+          Fees & Concessions screen to finish this admission.
         </div>
       )}
 
       <div className={`${panel} p-5 mb-5 flex flex-wrap items-end gap-4`}>
-        <div className="min-w-[200px]">
-          <label className={eyebrow}>Promote from</label>
+        <div className="min-w-[150px]">
+          <label className={eyebrow}>From</label>
           <FilterSelect value={sourceYear} active
-            onChange={(e) => { setSourceYearPick(e.target.value); setSelected(new Set()); setConfirmed(new Set()); }}
+            onChange={(e) => { setSourceYearPick(e.target.value); setJustPromoted(null); }}
             className="mt-2">
             {years.map((y) => <option key={y} value={y}>{y}</option>)}
           </FilterSelect>
         </div>
-        <div className="flex gap-5 text-sm">
+        <ArrowRight size={16} className="text-slate-300 mb-3 shrink-0" />
+        <div className="min-w-[150px]">
+          <label className={eyebrow}>To</label>
+          <FilterSelect value={state.year} active
+            onChange={(e) => changeToYear(e.target.value)} className="mt-2">
+            {ACADEMIC_YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
+          </FilterSelect>
+        </div>
+        <div className="flex gap-5 text-sm sm:ml-auto">
           <div>
-            <p className="text-[22px] font-extrabold tabular-nums leading-none">{promotable.length}</p>
-            <p className="eyebrow text-slate-400 mt-1">Ready to review</p>
+            <p className="text-[22px] font-extrabold tabular-nums leading-none">{promotableAll.length}</p>
+            <p className="eyebrow text-slate-400 mt-1">Pending</p>
           </div>
           <div>
-            <p className="text-[22px] font-extrabold tabular-nums leading-none text-slate-400">{graduating.length}</p>
+            <p className="text-[22px] font-extrabold tabular-nums leading-none text-slate-400">{graduatingAll.length}</p>
             <p className="eyebrow text-slate-400 mt-1">Completing school</p>
           </div>
           {alreadyPromoted > 0 && (
@@ -698,90 +695,73 @@ function PromoteTab({ state, save }) {
         </div>
       </div>
 
-      {promotable.length === 0 && graduating.length === 0 ? (
+      {promotableAll.length > 0 || graduatingAll.length > 0 ? (
+        <input className={`${field} max-w-sm mb-5`} value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Find the student at the counter — name or admission no." />
+      ) : null}
+
+      {promotableAll.length === 0 && graduatingAll.length === 0 ? (
         <div className={`${panel} border-dashed p-10 text-center text-slate-400 font-semibold`}>
           Everyone from {sourceYear} is already accounted for in {state.year}.
+        </div>
+      ) : promotable.length === 0 && graduating.length === 0 ? (
+        <div className={`${panel} border-dashed p-10 text-center text-slate-400 font-semibold`}>
+          No one in {sourceYear} matches "{query}".
         </div>
       ) : (
         <>
           {promotable.length > 0 && (
             <div className={`${panel} overflow-hidden mb-5`}>
-              <div className="px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+              <div className="px-6 py-4 border-b border-slate-100">
                 <h2 className="font-extrabold">Promote to the next class</h2>
-                <button onClick={toggleSelectAllReady}
-                  className="text-xs font-bold text-brand-600 hover:text-brand-700">
-                  Select / clear all ready
-                </button>
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[820px]">
+                <table className="w-full min-w-[760px]">
                   <thead className="bg-slate-50/70">
                     <tr>
-                      <th className={th} style={{ width: "5%" }} />
                       <th className={th}>Student</th>
                       <th className={th}>Moving</th>
                       <th className={th}>New section</th>
-                      <th className={th}>Status</th>
+                      <th className={th} />
                     </tr>
                   </thead>
                   <tbody>
-                    {promotable.map(({ student: s, target, decisionNeeded }) => {
-                      const isConfirmed = confirmed.has(s.admissionNo);
-                      const isSelected = selected.has(s.admissionNo);
-                      return (
-                        <tr key={s.admissionNo} className="border-b border-slate-50 text-sm">
-                          <td className="px-4 py-2.5">
-                            <input type="checkbox"
-                              className="w-4 h-4 accent-brand-600"
-                              checked={isSelected}
-                              disabled={decisionNeeded && !isConfirmed}
-                              onChange={() => toggle(s.admissionNo)} />
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <div className="font-bold">{s.name}</div>
-                            <div className="text-xs text-slate-400 tabular-nums">{s.admissionNo}</div>
-                          </td>
-                          <td className="px-4 py-2.5 whitespace-nowrap">
-                            <span className="font-semibold text-slate-500">{s.className}-{s.section}</span>
-                            <ArrowRight size={13} className="inline mx-1.5 text-slate-300" />
-                            <span className="font-bold">{target}</span>
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <input value={sections[s.admissionNo] ?? s.section}
-                              onChange={(e) => setSections({ ...sections, [s.admissionNo]: e.target.value })}
-                              className="w-20 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-center outline-none focus:border-brand-500" />
-                          </td>
-                          <td className="px-4 py-2.5">
-                            {decisionNeeded && !isConfirmed ? (
-                              <button onClick={() => confirmOptIn(s.admissionNo)}
-                                className="text-xs font-bold rounded-lg px-3 py-1.5 border-2 border-amber-300 bg-amber-50 text-amber-700 hover:border-amber-400">
-                                Confirm {target} admission
-                              </button>
-                            ) : decisionNeeded ? (
-                              <span className="text-xs font-bold rounded-lg px-3 py-1.5 border-2 border-emerald-300 bg-emerald-50 text-emerald-700">
-                                Confirmed
-                              </span>
-                            ) : (
-                              <span className="text-xs font-semibold text-slate-400">Ready</span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {promotable.map(({ student: s, target, decisionNeeded }) => (
+                      <tr key={s.admissionNo} className="border-b border-slate-50 text-sm">
+                        <td className="px-4 py-2.5">
+                          <div className="font-bold">{s.name}</div>
+                          <div className="text-xs text-slate-400 tabular-nums">{s.admissionNo}</div>
+                        </td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <span className="font-semibold text-slate-500">{s.className}-{s.section}</span>
+                          <ArrowRight size={13} className="inline mx-1.5 text-slate-300" />
+                          <span className="font-bold">{target}</span>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <input value={sections[s.admissionNo] ?? s.section}
+                            onChange={(e) => setSections({ ...sections, [s.admissionNo]: e.target.value })}
+                            className="w-20 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-center outline-none focus:border-brand-500" />
+                        </td>
+                        <td className="px-4 py-2.5 text-right">
+                          <button onClick={() => promoteOne(s, target)}
+                            className={decisionNeeded
+                              ? "text-xs font-bold rounded-lg px-3 py-2 border-2 border-amber-300 bg-amber-50 text-amber-700 hover:border-amber-400 whitespace-nowrap"
+                              : "text-xs font-bold rounded-lg px-3 py-2 bg-brand-600 text-white hover:bg-brand-700 whitespace-nowrap"}>
+                            {decisionNeeded ? `Confirm ${target} & Promote` : "Promote"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
-
-              <div className="px-6 py-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
-                <p className="text-xs text-slate-500 max-w-md">
-                  Moving into 1st PU always needs the explicit confirmation above —
-                  many students leave for another board or college after X, so it is
-                  never bulk-selected automatically.
-                </p>
-                <button className={primary} disabled={!selectedReadyCount} onClick={commit}>
-                  <ArrowRight size={16} /> Promote {selectedReadyCount || ""} into {state.year}
-                </button>
-              </div>
+              <p className="px-6 py-3 text-xs text-slate-500 border-t border-slate-100 max-w-2xl">
+                Each student is promoted one at a time as they're found — moving
+                into 1st PU is worded as its own confirmation rather than a plain
+                "Promote", since many students leave for another board or college
+                after X.
+              </p>
             </div>
           )}
 
@@ -871,7 +851,16 @@ function NewAdmissionTab({ state, save }) {
   return (
     <div className="grid lg:grid-cols-[1fr_340px] gap-5 items-start">
       <div className={`${panel} p-6`}>
-        <h2 className="text-lg font-extrabold mb-1">New admission for {state.year}</h2>
+        <div className="flex flex-wrap items-end justify-between gap-4 mb-1">
+          <h2 className="text-lg font-extrabold">New admission</h2>
+          <div className="min-w-[140px]">
+            <label className={eyebrow}>Admitting into</label>
+            <FilterSelect value={state.year} active className="mt-1.5"
+              onChange={(e) => save({ ...state, year: e.target.value })}>
+              {ACADEMIC_YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
+            </FilterSelect>
+          </div>
+        </div>
         <p className="text-sm text-slate-500 mb-5">
           For a student joining the school for the first time. The admission
           fee applies automatically, since it's charged only on first entry.
@@ -884,7 +873,8 @@ function NewAdmissionTab({ state, save }) {
         )}
         {done && (
           <div className="mb-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl px-4 py-3 text-sm font-semibold">
-            Added {done.name} to {done.className}-{done.section}.
+            Added {done.name} to {done.className}-{done.section}. Take payment on
+            the Fees & Concessions screen to finish this admission.
           </div>
         )}
 

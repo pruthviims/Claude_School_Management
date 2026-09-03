@@ -88,9 +88,10 @@ const NAV = [
 ];
 
 // Screens where the working Academic Year actually matters. School Profile
-// manages the year as school metadata via its own field, so it's excluded
-// here to avoid showing two year controls on the same page.
-const YEAR_SCOPED_STEPS = new Set(["transport", "fees", "admissions", "import", "concessions"]);
+// manages the year as school metadata via its own field, and Admissions
+// has its own From/To (or Admitting into) year controls built into the
+// page, so both are excluded here to avoid a second, confusing selector.
+const YEAR_SCOPED_STEPS = new Set(["transport", "fees", "import", "concessions"]);
 
 const FEES_SUBTABS = [
   { id: "transport", label: "Bus Routes", Icon: Bus },
